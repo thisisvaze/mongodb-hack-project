@@ -71,6 +71,8 @@ pub struct Config {
     index_live_frames: bool,
     /// The address clients reach this server at, for links in events. Taken from the request when not set.
     pub public_base: Option<String>,
+    /// The built web app (frontend/web/dist). When present, this server also serves the dashboard.
+    web_dir: Option<std::path::PathBuf>,
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -121,6 +123,7 @@ impl Config {
             guide_repeat_ms: env_num("GUIDE_REPEAT_SECS", 30_u64) * 1000,
             index_live_frames: env_or("INDEX_LIVE_FRAMES", "true") != "false",
             public_base: env_opt("PUBLIC_BASE"),
+            web_dir: Some(std::path::PathBuf::from(env_or("WEB_DIR", "../frontend/web/dist"))).filter(|dir| dir.join("index.html").is_file()),
         })
     }
 }
@@ -425,6 +428,32 @@ async fn latest_frame(State(app): State<Arc<App>>, Query(q): Query<UserQuery>) -
     }
 }
 
+/// Serves the built web app, so one address covers the dashboard, the capture
+/// page and the API. Any path that is not a file gets index.html, because the
+/// app does its own routing ("/capture").
+async fn web_app(State(app): State<Arc<App>>, uri: axum::http::Uri) -> Response {
+    let Some(dir) = &app.cfg.web_dir else { return StatusCode::NOT_FOUND.into_response() };
+    let wanted = uri.path().trim_start_matches('/');
+    let inside = !wanted.is_empty() && !wanted.split('/').any(|part| part == ".." || part.is_empty());
+    let file = Some(dir.join(wanted)).filter(|path| inside && path.is_file()).unwrap_or_else(|| dir.join("index.html"));
+    let content_type = match file.extension().and_then(|e| e.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("ico") => "image/x-icon",
+        Some("json" | "map") => "application/json",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    };
+    match tokio::fs::read(&file).await {
+        Ok(bytes) => ([(CONTENT_TYPE, content_type)], bytes).into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 async fn health() -> &'static str {
     "ok"
 }
@@ -560,13 +589,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health))
         .route("/healthz", get(health))
         .route("/stats", get(stats))
+        .fallback(web_app)
         // A base64 image in JSON is a third larger than the image itself.
         .layer(DefaultBodyLimit::max(MAX_FRAME_BYTES * 3 / 2))
         .layer(axum::middleware::from_fn(api::cors))
         .with_state(app.clone());
 
     let listener = tokio::net::TcpListener::bind(&app.cfg.bind).await.with_context(|| format!("binding {}", app.cfg.bind))?;
-    tracing::info!(bind = %app.cfg.bind, db = %app.cfg.db, gate_tick_ms = app.cfg.gate_tick_ms, "pipeline listening");
+    tracing::info!(bind = %app.cfg.bind, db = %app.cfg.db, gate_tick_ms = app.cfg.gate_tick_ms, web_app = app.cfg.web_dir.is_some(), "pipeline listening");
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

@@ -767,6 +767,46 @@ Measured during development, not guarantees.
 | Note turn | about 3 s |
 | Question turn | 1.2 to 3.7 s |
 
+## Hosting it for a demo
+
+MongoDB Atlas hosts the database only: the collections, Vector Search and the
+change streams. This server and the web app run somewhere else. The server can
+serve the web app itself, so one address covers the dashboard, the capture page
+and the API.
+
+1. Build the web app so that it calls the address it was loaded from:
+
+   ```sh
+   cd frontend/web
+   npm install
+   VITE_API_BASE=. npm run build
+   ```
+
+2. Start the server from `pipeline/`. It serves `../frontend/web/dist` when that
+   folder exists (`WEB_DIR` points it elsewhere) and logs `web_app=true`:
+
+   ```sh
+   cd pipeline
+   cargo run --release
+   ```
+
+3. Open `http://localhost:8080/?space=venue` for the dashboard and
+   `http://localhost:8080/capture?space=venue` for the capture page. The web app
+   opens the space `hotel` when no `space` is given, and that space is not in
+   the database, so name one that is (`home`, `venue`).
+
+4. For a public HTTPS link (phone browsers only allow the camera and microphone
+   on HTTPS), put a tunnel in front of port 8080:
+
+   ```sh
+   brew install cloudflared
+   cloudflared tunnel --url http://localhost:8080
+   ```
+
+   Share the `https://....trycloudflare.com` address it prints, with
+   `/?space=venue` on the end. The link works for as long as this machine, the
+   server and the tunnel keep running.
+
 ## Not built
 
 - Speech-to-text. A turn that carries only `audio` gets `415`; send the transcript in `text`.

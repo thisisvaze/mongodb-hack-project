@@ -240,7 +240,8 @@ impl Store {
     /// The user's own active memories, for "forget".
     pub async fn own_active(&self, space_id: &str, user_id: &str) -> anyhow::Result<Vec<Document>> {
         let filter = doc! { "space_id": space_id, "status": "active", "owner_id": user_id };
-        collect(self.memories.find(filter).projection(doc! { NO_VECTOR: 0 }).await.context("listing own memories")?).await
+        // Pictures are left out: this list is only matched by name.
+        collect(self.memories.find(filter).projection(doc! { NO_VECTOR: 0, "image_url": 0 }).await.context("listing own memories")?).await
     }
 
     /// Marks memories with a final status ("forgotten" or "expired"), strips
