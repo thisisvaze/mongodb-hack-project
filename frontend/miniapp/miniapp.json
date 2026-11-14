@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.homememory.glasses",
+  "version": "1.0.0",
+  "name": "Home Memory",
+  "description": "Press the glasses button and speak a note or a question about your home.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Hears the note or question you speak after pressing the button."
+    },
+    {
+      "type": "CAMERA",
+      "description": "Takes a photo of what you are looking at when you speak."
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "MICROPHONE",
+      "level": "REQUIRED"
+    },
+    {
+      "type": "CAMERA",
+      "level": "OPTIONAL",
+      "description": "Adds a photo to each note or question."
+    },
+    {
+      "type": "BUTTON",
+      "level": "OPTIONAL",
+      "description": "Press to speak. Without it, turns can only be typed on the phone."
+    },
+    {
+      "type": "SPEAKER",
+      "level": "OPTIONAL",
+      "description": "Speaks the reply."
+    }
+  ]
+}
