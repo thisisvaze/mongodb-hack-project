@@ -2,7 +2,7 @@
 
 Work plan for everything in [`01-architecture-and-stream-pipeline.md`](./01-architecture-and-stream-pipeline.md), in the same order as that doc. Each step lists the work, who owns it, and how to tell it is done.
 
-The product is framed around home support (see the [README](./README.md)), but the pipeline is the same for any shared space. `venue_id` in the data shapes below identifies the space: a home by default.
+The product is built to support blind and low-vision people wherever they go (see the [README](./README.md)), so the pipeline is the same for every space. `venue_id` in the data shapes below identifies the space the user is in (home, office, hotel room, ...).
 
 Owners follow the 3-person split in the [README](./README.md):
 
@@ -38,7 +38,7 @@ Build the dev fallback first. It gives M and U real frames within the first hour
 - [ ] `dev-sim/index.html`:
   - webcam via `getUserMedia`, drawn to a canvas, posted as JPEG every ~500 ms
   - mic transcripts via the browser's `SpeechRecognition` API, posted when an utterance is final
-  - dropdowns for user (A / B) and space (`venue_id`: the demo home, or a temporary stay)
+  - dropdowns for user (A / B) and space (`venue_id`: the demo space, or a temporary stay)
 
 **Done when:** two laptops post frames at the same time as different users.
 
@@ -96,7 +96,7 @@ Build the dev fallback first. It gives M and U real frames within the first hour
 - [ ] Set a response schema in the request so the JSON always deserialises into `Vec<Observation>` with `serde`.
 - [ ] The prompt must enforce:
   - `tactile_anchor` uses touch and body-relative landmarks only, never colours or appearance
-  - `proposed_visibility` is `public` (shared with everyone in the home) only for permanent fixtures and hazards with no PII or faces
+  - `proposed_visibility` is `public` (shared with everyone in the space) only for permanent fixtures and hazards with no PII or faces
   - `ttl_seconds` is `null`, `7200` for temporary hazards, or the end of the stay in temporary stay mode
   - `bbox` is `[ymin, xmin, ymax, xmax]` on a 0–1000 scale
 - [ ] Normalise `item_key` (for example `keys` → `house_keys`) so the reconciler can match items across sightings.

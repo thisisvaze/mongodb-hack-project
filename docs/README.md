@@ -1,25 +1,25 @@
-# Spatial Recall — Governed Multimodal & Voice Memory for Home Support
+# Spatial Recall — Governed Multimodal & Voice Memory for Blind & Low-Vision Support
 
-> **"A shared memory of your home + private personal memory" on Mentra Live Smart Glasses**
+> **"A memory that remembers where things are, so a blind person doesn't have to ask" on Mentra Live Smart Glasses**
 > Built for *Agents in Context Toronto: a MongoDB Hackathon* (Sat, Nov 14, 2026)
 
 ## The Problem
 Current AI vision tools for blind and low-vision people (*Be My Eyes*, *Seeing AI*, *ChatGPT Voice*) have **total amnesia**:
 1. They only describe what is directly in front of the camera **right now** — put your meds, cane, or keys down an hour ago (or inside a pocket/drawer a camera can't see), and they cannot help.
-2. Homes change constantly. A family member moves the kettle, a carer restocks the medicine cabinet, a delivery gets left by the back door — and the person who needs to know has no way to find out without asking someone.
-3. Always-on cameras and mics inside a home capture deeply sensitive data (prescriptions, IDs, wallets, mail, private conversations) that **cannot** sit in an ungoverned prompt or leak between household members, carers, and guests.
+2. The world around a blind person changes constantly. Someone moves the kettle, a co-worker shifts a chair, a carer restocks the meds, a hotel room is laid out differently from the last one — and the person who needs to know has no way to find out without asking a sighted person.
+3. Always-on cameras and mics worn all day capture deeply sensitive data (prescriptions, IDs, wallets, mail, private conversations) that **cannot** sit in an ungoverned prompt or leak to the other people sharing the same spaces.
 
 ## Our Solution
-Wearing **Mentra Live** camera + audio glasses (or using a phone browser fallback), users naturally move around their home and speak. Our agent fuses **live camera frames + microphone transcripts** into a governed **MongoDB Atlas + Voyage Multimodal 3.5** memory engine and guides users back to landmarks and personal items step-by-step using **ElevenLabs** low-latency voice:
+Wearing **Mentra Live** camera + audio glasses (or using a phone browser fallback), blind and low-vision users go about their day — at home, at work, at a friend's place, in a hotel — and simply speak. Our agent fuses **live camera frames + microphone transcripts** into a governed **MongoDB Atlas + Voyage Multimodal 3.5** memory engine and guides them back to landmarks and personal items step-by-step using **ElevenLabs** low-latency voice:
 
-- **🟢 Shared Household Layer:** Doors, stairs, light switches, outlets, appliances, counters, and temporary hazards (*wet floor after mopping, toys on the stairs, an open dishwasher*) pass a **pre-write Policy & PII Gate** and become immediately searchable by *everyone in that home* — the user, family members, and carers — via MongoDB Change Streams (`watch()`).
-- **🔒 Private Personal Layer:** Wallets, keys, medications, documents, and spoken self-notes (*"keys in my left jacket pocket"*) are automatically quarantined to `visibility: "private"` (`owner_id` locked) — invisible to anyone else in the home.
+- **🟢 Shared Space Layer:** Doors, stairs, light switches, outlets, appliances, counters, and temporary hazards (*wet floor, a bag left on the stairs, an open dishwasher*) pass a **pre-write Policy & PII Gate** and become immediately searchable by *everyone in that space* via MongoDB Change Streams (`watch()`) — so a second blind user can be guided around a room they have never scanned.
+- **🔒 Private Personal Layer:** Wallets, keys, medications, documents, and spoken self-notes (*"keys in my left jacket pocket"*) are automatically quarantined to `visibility: "private"` (`owner_id` locked) — invisible to anyone else in the space.
 - **♻️ Self-Healing & Expiring Memory:** When objects move (or a voice note updates a camera sighting), older memories automatically flip to `status: "superseded"`. Temporary hazards and temporary stays (a guest room, a hotel, a respite stay) auto-delete via **MongoDB TTL indexes**, and saying *"Forget my nightstand"* wipes matching memories immediately.
 
-### Beyond the home
-Home support is the primary use case, but nothing in the design is home-specific. The same shared/private split works in any space people share: offices, care homes, hotels, or a cafe. A "space" is just a `venue_id` with its own shared layer and per-person private layers.
+### Built around the person, not the place
+The product is for the blind or low-vision person, and it goes wherever they go. A "space" is just a `venue_id` with its own shared layer and per-person private layers: a home, an office, a care home, a hotel room, or a cafe all work the same way. The demo uses a kitchen counter only because it is easy to set up on a table.
 
-> **Naming note:** the field names in the schema and code stay as they are. `venue_id` identifies a space (a home by default), and `visibility: "public"` means *shared with everyone in that space*, not with the world.
+> **Naming note:** the field names in the schema and code stay as they are. `venue_id` identifies a space (any place the user spends time), and `visibility: "public"` means *shared with everyone in that space*, not with the world.
 
 ---
 

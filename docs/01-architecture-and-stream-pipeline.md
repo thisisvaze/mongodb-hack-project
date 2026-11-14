@@ -77,7 +77,7 @@ A naive pipeline that uploads full MP4 videos, saves every frame, or waits for d
 ### 2. Minimal-Footprint RAM Ring Buffer (Hot Path — Ready in `~0.4s`)
 - As soon as WebRTC connects (`status: "streaming"`), an ffmpeg/aiortc decoder overwrites a **single in-memory variable**:
   ```python
-  latest_frame: FrameSnapshot  # { jpeg_bytes, timestamp, phash, venue_id, user_id }  (venue_id = the home or other space)
+  latest_frame: FrameSnapshot  # { jpeg_bytes, timestamp, phash, venue_id, user_id }  (venue_id = the space the user is in)
   recent_utterances: deque[Utterance]  # last 30s of spoken mic transcripts
   ```
 - **Zero disk bloat:** Frames are *not* written to disk unless the Change Gate promotes one to a memory keyframe.
@@ -98,7 +98,7 @@ When the gate triggers, `asyncio.create_task(process_observation(...))` runs off
      - `item_key`: canonical normalized slug (`"house_keys"`, `"bathroom_door"`, `"ibuprofen_bottle"`, `"wall_outlet"`).
      - `category`: `"venue_fixture" | "hazard" | "personal_item" | "spoken_note"` (`venue_fixture` = a fixed part of the space, such as a door, stairs, or an appliance).
      - `tactile_anchor`: **strictly non-visual, touch/body-relative landmarks** (*"6 inches left of the electric kettle on the waist-high counter"*, never *"next to the blue box"*).
-     - `proposed_visibility`: `"public"` (shared with everyone in the home; only permanent fixtures & hazards with zero PII/faces) vs. `"private"` (personal belongings, meds, IDs, wallets, pockets, private speech).
+     - `proposed_visibility`: `"public"` (shared with everyone in the space; only permanent fixtures & hazards with zero PII/faces) vs. `"private"` (personal belongings, meds, IDs, wallets, pockets, private speech).
      - `ttl_seconds`: `null` (durable), `7200` (temporary hazard like a freshly mopped floor), or the stay's end time (temporary stay mode).
      - `bbox`: `[ymin, xmin, ymax, xmax]` (0–1000 normalized coordinates from Gemini for drawing highlights on the Judge UI!).
 2. **Voyage Multimodal 3.5 (`voyage-multimodal-3.5`):**
