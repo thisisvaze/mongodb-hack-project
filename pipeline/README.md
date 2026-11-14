@@ -792,6 +792,10 @@ Measured during development, not guarantees.
   shortly before it: after "Robin", whatever that person says in the next eight
   seconds (`WAKE_WINDOW_SECS`) is also taken as said to the glasses, so "Robin."
   and then "what's this?" works. Each use of the name starts the eight seconds again.
+- **Silent unless there is an answer.** A sentence that only follows the name,
+  without using it, may be someone else talking. It is answered aloud only when
+  there is a real answer; "I didn't catch anything to remember" and "I don't
+  have anything about that yet" are never spoken for it.
 - **A glasses app that always listens** and does not mark its turns `passive`
   needs `WAKE_WORD_REQUIRED=true` on the server; otherwise every overheard
   sentence is treated as a request.

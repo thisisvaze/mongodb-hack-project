@@ -443,6 +443,9 @@ pub struct TurnBody {
     image_url: Option<String>,
 }
 
+const NOTHING_TO_REMEMBER: &str = "I didn't catch anything to remember in that.";
+const NOTHING_KNOWN: &str = "I don't have anything about that yet.";
+
 fn reply(kind: &str, text: impl Into<String>, memory_ids: Vec<String>) -> Value {
     // No audio is generated here: clients fall back to their own text-to-speech.
     json!({ "kind": kind, "reply_text": text.into(), "audio_url": null, "memory_ids": memory_ids })
@@ -576,12 +579,18 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
 
     // Overheard speech is listened to but never answered: a note about where
     // something is gets remembered silently, and everything else is dropped.
-    let overheard = (body.passive || app.cfg.wake_word_required) && !addressed;
+    let gated = body.passive || app.cfg.wake_word_required;
+    let overheard = gated && !addressed;
     let kind = match overheard {
         true if crate::gate::is_note(&text) => Intent::Note,
         true => Intent::Nothing,
         false => intent(&text),
     };
+    // A sentence that only follows the name, without using it, may be someone
+    // else talking. The glasses speak for it only when they have a real answer:
+    // never to say that they found nothing.
+    let follow_up = gated && addressed && !named;
+    let quiet_kind = matches!(kind, Intent::Note | Intent::Nothing);
     let scope = space.scope_for(&body.user_id);
     let turn_image = frame.as_ref().map(|f| crate::frame_json(&public_base(&app, &headers), &body.user_id, f)["image_url"].clone());
     let mut response = match kind {
@@ -590,7 +599,7 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
         Intent::Question => question(&app, &body.space_id, &body.user_id, &role, &scope, &safe, &claim, frame.as_ref()).await?,
         Intent::Note => note(&app, &body.space_id, &body.user_id, frame, text.clone()).await?,
     };
-    if overheard {
+    if overheard || (follow_up && (quiet_kind || response["reply_text"] == NOTHING_KNOWN)) {
         response["reply_text"] = json!("");
     }
     response["heard_text"] = json!(safe);
@@ -634,7 +643,7 @@ async fn note(app: &App, space_id: &str, user_id: &str, frame: Option<Frame>, te
     let stored = process::observe(app, &trigger).await?;
     Ok(match stored.first() {
         Some(first) => reply("saved", format!("Saved. {}", first.summary), stored.iter().map(|s| s.id.clone()).collect()),
-        None => reply("ignored", "I didn't catch anything to remember in that.", vec![]),
+        None => reply("ignored", NOTHING_TO_REMEMBER, vec![]),
     })
 }
 
@@ -749,7 +758,7 @@ async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &
         return Ok(reply("denied", "Sorry, I can't share that with you.", vec![]));
     }
     app.store.insert_audit(audit_event(space_id, user_id, "query_answered", "info", format!("Asked \"{text}\". No matching memory.{claim}"), vec![], Some(text))).await?;
-    Ok(reply("answer", "I don't have anything about that yet.", vec![]))
+    Ok(reply("answer", NOTHING_KNOWN, vec![]))
 }
 
 async fn forget(app: &App, space_id: &str, user_id: &str, name: &str, text: &str) -> Result<Value, ApiError> {
