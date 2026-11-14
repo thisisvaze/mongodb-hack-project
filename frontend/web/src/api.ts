@@ -229,8 +229,9 @@ export function postTurn(turn: TurnRequest): Promise<TurnResponse> {
   return sendJson<TurnResponse>('POST', '/api/turn', turn);
 }
 
-export function postFrame(frame: FrameRequest): Promise<{ ok: boolean }> {
-  return sendJson<{ ok: boolean }>('POST', '/api/frames', frame);
+/** `say` is live guidance about this view: something already remembered here, or null. */
+export function postFrame(frame: FrameRequest): Promise<{ ok: boolean; say?: string | null }> {
+  return sendJson<{ ok: boolean; say?: string | null }>('POST', '/api/frames', frame);
 }
 
 export function putRules(spaceId: string, rules: Rules): Promise<RulesResponse> {

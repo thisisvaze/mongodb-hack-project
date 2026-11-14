@@ -10,3 +10,5 @@ dist/
 build/
 docs/safespace-flowchart.html
 docs/system-diagram.html
+target/
+videos/

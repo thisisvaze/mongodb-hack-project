@@ -41,7 +41,15 @@ registerMiniapp<Channels>(async (session) => {
   const settings = () => status.settings
   const camera = createCamera(session, push)
   const turns = createTurns(session, {settings, capture: camera.capture, push})
-  const frames = createFrameLoop({camera, settings, turnBusy: turns.busy, push})
+  const frames = createFrameLoop({
+    camera,
+    settings,
+    turnBusy: turns.busy,
+    push,
+    say: (text) => {
+      session.speaker.speak(text).catch((err: unknown) => console.warn("guidance speech failed:", messageOf(err)))
+    },
+  })
 
   const loaded = session.storage
     .get(SETTINGS_KEY)

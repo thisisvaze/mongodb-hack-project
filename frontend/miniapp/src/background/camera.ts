@@ -54,6 +54,8 @@ export function createFrameLoop(deps: {
   settings: () => Settings
   turnBusy: () => boolean
   push: (patch: Partial<Status>) => void
+  /** Speaks live guidance returned with a frame. */
+  say?: (text: string) => void
 }) {
   let timer: ReturnType<typeof setInterval> | null = null
   let posting = false
@@ -78,13 +80,15 @@ export function createFrameLoop(deps: {
         error = "No photo taken"
         return
       }
-      await postFrame(settings.apiBase, {
+      const reply = await postFrame(settings.apiBase, {
         space_id: settings.spaceId,
         user_id: settings.user!.id,
         ts: timestamp(),
         image_b64: null,
         image_url: url,
       })
+      // Live guidance: never talk over a turn the wearer has started.
+      if (reply.say && !deps.turnBusy()) deps.say?.(reply.say)
       sent++
       error = null
     } catch (err) {

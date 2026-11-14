@@ -16,7 +16,7 @@ import {
   type Recognition,
   type WavRecorder,
 } from '../media';
-import { speakReply, stopSpeaking, unlockSpeech } from '../speech';
+import { speakAside, speakReply, stopSpeaking, unlockSpeech } from '../speech';
 import type { SendMode, TurnAudio, User } from '../types';
 
 const FRAME_INTERVAL_MS = 3_000;
@@ -349,7 +349,9 @@ export function Capture() {
       if (!image) return;
       busy = true;
       try {
-        await postFrame({ space_id: SPACE_ID, user_id: frameUserId, ts: nowIso(), image_b64: image, image_url: null });
+        const sent = await postFrame({ space_id: SPACE_ID, user_id: frameUserId, ts: nowIso(), image_b64: image, image_url: null });
+        // Live guidance: the backend recognised this view from an earlier walk-through.
+        if (sent.say && !latest.current.muted) speakAside(sent.say);
         count += 1;
         if (!stopped) setFrameStatus(`${count} sent. Last at ${formatTime(new Date().toISOString())}.`);
       } catch (err) {

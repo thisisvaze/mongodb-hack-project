@@ -155,6 +155,7 @@ export function postTurn(base: string, turn: TurnRequest): Promise<TurnResponse>
   return call(base, "POST", "/api/turn", turn, TURN_TIMEOUT_MS)
 }
 
-export function postFrame(base: string, frame: FrameRequest): Promise<{ok: boolean}> {
+/** `say` is live guidance about this view: something already remembered here, or null. */
+export function postFrame(base: string, frame: FrameRequest): Promise<{ok: boolean; say?: string | null}> {
   return call(base, "POST", "/api/frames", frame, FRAME_TIMEOUT_MS)
 }

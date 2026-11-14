@@ -37,6 +37,13 @@ export function speakReply(text: string, audioUrl: string | null): void {
   audio.play().catch(fallBack);
 }
 
+/** Speaks a short aside, such as live guidance, unless something is already being said. */
+export function speakAside(text: string): void {
+  const speech = synth();
+  if (!speech || !text.trim() || currentAudio || speech.speaking || speech.pending) return;
+  speakWithBrowser(text);
+}
+
 /**
  * Mobile Safari only lets speech start from a tap. Speaking an empty utterance
  * inside the tap lets the real reply be spoken after the network call returns.
