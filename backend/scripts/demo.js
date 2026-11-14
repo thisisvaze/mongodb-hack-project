@@ -8,6 +8,7 @@ import {
   resolveCaller, visibleFilter, hiddenFilter, decideAnswer, detectIdentityClaim,
   buildPrompt, parseProposal, gateTurn, decideStorage, authorizeForget,
   validateRules, describeRulesChange, rejectedRulesAudit, GuardrailError,
+  composeAnswer, guidanceCheck, fetchImage,
 } from '../guardrails/index.js';
 
 // ---- The "home" space and some memories, as in db/setup.js and the mock ----
@@ -212,6 +213,47 @@ putRules('Rules: keep-time written as "2 hours"', (r) => { r.topics.hazard.keep_
 putRules('Rules: resident loses "see everything"', (r) => { r.roles.resident.can_see = ['resident_only']; });
 putRules('Rules: role name with capitals and a space', (r) => { r.roles['Care Team'] = { can_see: ['care'] }; });
 putRules('Rules: valid change, add care_team', (r) => { r.roles.care_team = { can_see: ['care'] }; });
+
+// What gets spoken
+{
+  const NOW = new Date();
+  const ago = (min) => new Date(NOW.getTime() - min * 60_000);
+  const names = Object.fromEntries(space.members.map((m) => [m.id, m.name]));
+  const keys = { ...memories[0], topic: 'valuables', updated_at: ago(10) };
+  const pills = { ...memories[1], topic: 'medication', updated_at: ago(60 * 24 * 2) };
+  const wetFloor = { _id: 'm_h1', space_id: 'home', owner_id: 'u_caregiver', item: 'wet floor', item_key: 'wet_floor', summary: 'Wet floor by the kitchen sink.', group: 'house_guide', topic: 'hazard', status: 'active', updated_at: ago(4), expires_at: new Date(NOW.getTime() + 3_600_000) };
+  const speak = (title, userId, args, check) => {
+    const out = composeAnswer({ caller: resolveCaller(space, userId), names, now: NOW, ...args });
+    show(title, { who: names[userId], said: args.asked, reply: out.reply_text, audit: out.notes.length ? { action: 'query_answered', verdict: 'allowed', detail: out.notes.join(' ') } : null, expect: () => check(out.reply_text) });
+  };
+  speak('Gemini says "it\'s safe" (removed)', 'u_resident', { asked: 'Where are my keys?', hit: keys, draft: 'Your keys are on the hook by the front door. The path is clear, so it is safe to walk there.' },
+    (r) => !/safe|clear/i.test(r) && r.includes('10 minutes ago'));
+  speak('A hazard is said before the answer', 'u_visitor', { asked: 'Where is the bathroom?', hit: { ...memories[3], topic: 'house_guide', updated_at: ago(60 * 24 * 5) }, hazards: [wetFloor] },
+    (r) => r.startsWith('Careful: Wet floor'));
+  speak('Medication: no dose advice from Gemini', 'u_resident', { asked: 'Where are my evening pills?', hit: pills, draft: 'They are in the blue box. You should take two now.' },
+    (r) => !/take two/.test(r) && r.includes('check the label'));
+  speak('A weak match is hedged', 'u_resident', { asked: 'Where is my wallet?', hit: keys, score: 0.71 },
+    (r) => r.startsWith("I'm not sure"));
+  const lost = guidanceCheck({ lastFrameAt: new Date(NOW.getTime() - 9000), now: NOW });
+  show('Camera feed drops during guidance', { who: 'Resident', said: 'Guide me to the kitchen', reply: lost.say, audit: { action: 'query_answered', verdict: 'info', detail: lost.note }, expect: () => lost.ok === false });
+}
+
+// Image downloads
+for (const [title, url] of [
+  ['Image URL points at the cloud metadata address', 'https://169.254.169.254/latest/meta-data/iam/'],
+  ['Image URL points at the server itself', 'https://localhost/admin'],
+  ['Image URL uses plain http', 'http://cdn.example.com/photo.jpg'],
+  ['Image URL hides a password', 'https://admin:secret@cdn.example.com/photo.jpg'],
+]) {
+  let message;
+  try {
+    await fetchImage(url);
+    message = 'downloaded';
+  } catch (err) {
+    message = `${err.status ?? 'error'} ${err.message}`;
+  }
+  show(title, { who: 'Glasses app', said: url, reply: message, expect: () => message.startsWith('400') });
+}
 
 console.log(`\n${C.bold}${n - failures} of ${n} scenarios behaved as expected.${C.off}`);
 process.exitCode = failures ? 1 : 0;
