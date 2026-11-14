@@ -1,10 +1,13 @@
 import type {MiniappSession} from "@mentra/miniapp/background"
 import {messageOf, postFrame, timestamp} from "../shared/api"
-import {isConfigured, SPACE_ID, type Settings, type Status} from "../shared/channels"
+import {isConfigured, SPACE_ID, type FrameMode, type Settings, type Status} from "../shared/channels"
 
 const PHOTO_TIMEOUT_MS = 45_000
 const WARM_DURATION_MS = 30_000
 const MAX_POSTS_IN_FLIGHT = 2 // frames waiting on the server at once; caps the pile-up when it is slow
+// ponytail: the Mac running frontend/scripts/receive-video.sh, which turns this stream into frames
+// for the backend. Hardcoded for the hackathon network; make it a setting if the Mac's IP changes.
+const VIDEO_URL = "rtmp://192.168.6.193:1935/live/glasses"
 
 export interface Camera {
   /** Resolves with a signed photo URL, or null when capture failed. Never rejects. */
@@ -12,10 +15,13 @@ export interface Camera {
   /** Pre-warms the glasses camera sensor so the next capture is much faster. */
   warm(): void
   busy(): boolean
+  /** The last photo's URL if it was taken within `maxAgeMs`, else null. */
+  recent(maxAgeMs: number): string | null
 }
 
 export function createCamera(session: MiniappSession, push: (patch: Partial<Status>) => void): Camera {
   let inFlight: Promise<string | null> | null = null
+  let last: {url: string; takenAt: number} | null = null
 
   function warm(): void {
     if (inFlight || session.capabilities?.hasCamera === false) return
@@ -39,6 +45,7 @@ export function createCamera(session: MiniappSession, push: (patch: Partial<Stat
           const tookMs = Date.now() - startedAt
           console.log(`photo ok in ${tookMs}ms: ${photo.photoUrl.slice(0, 60)}...`)
           push({photo: {url: photo.photoUrl, tookMs}, photoError: null})
+          last = {url: photo.photoUrl, takenAt: startedAt}
           return photo.photoUrl
         },
         (err: unknown) => {
@@ -57,25 +64,31 @@ export function createCamera(session: MiniappSession, push: (patch: Partial<Stat
     return shot
   }
 
-  return {capture, warm, busy: () => inFlight !== null}
+  const recent = (maxAgeMs: number) => (last && Date.now() - last.takenAt <= maxAgeMs ? last.url : null)
+
+  return {capture, warm, busy: () => inFlight !== null, recent}
 }
 
-/** While on, posts a photo to POST /api/frames every few seconds (and immediately on turn-on). */
+/**
+ * Photo mode posts a photo to POST /api/frames every few seconds (and immediately on turn-on).
+ * Video mode streams straight from the glasses to VIDEO_URL over Wi-Fi, skipping BLE and Mentra's cloud.
+ */
 export function createFrameLoop(deps: {
   camera: Camera
   settings: () => Settings
   turnBusy: () => boolean
   push: (patch: Partial<Status>) => void
+  stream: MiniappSession["stream"]
   /** Speaks live guidance returned with a frame. */
   say?: (text: string) => void
 }) {
   let timer: ReturnType<typeof setInterval> | null = null
-  let everyMs: number | null = null
+  let mode: FrameMode = null
   let postsInFlight = 0
   let sent = 0
   let error: string | null = null
 
-  const report = () => deps.push({frames: {everyMs, sent, error}})
+  const report = () => deps.push({frames: {mode, sent, error}})
 
   async function tick(): Promise<void> {
     const settings = deps.settings()
@@ -119,18 +132,32 @@ export function createFrameLoop(deps: {
     }
   }
 
-  /** null turns the loop off; a number (re)starts it at that interval. */
-  function set(next: number | null): void {
+  function set(next: FrameMode): void {
     if (timer !== null) clearInterval(timer)
     timer = null
-    everyMs = next
-    if (next !== null) {
+    const wasVideo = mode === "video"
+    if (wasVideo && next !== "video") {
+      deps.stream.stop().catch((err: unknown) => console.warn("stopping video failed:", messageOf(err)))
+    }
+    mode = next
+    error = null
+    if (typeof next === "number") {
       deps.camera.warm()
       void tick()
       timer = setInterval(() => void tick(), next)
+    } else if (next === "video" && !wasVideo) {
+      deps.stream.startStream({direct: VIDEO_URL, video: {width: 1280, height: 720, fps: 15}, sound: false}).then(
+        (res) => console.log(`video streaming to ${VIDEO_URL}: ${res.status}`),
+        (err: unknown) => {
+          if (mode !== "video") return
+          error = `Video failed: ${messageOf(err)}`
+          mode = null
+          report()
+        },
+      )
     }
     report()
   }
 
-  return {set, sendOne: tick}
+  return {set, sendOne: tick, videoOn: () => mode === "video"}
 }

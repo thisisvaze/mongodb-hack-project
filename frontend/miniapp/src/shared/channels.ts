@@ -18,6 +18,9 @@ export interface Settings {
 /** The one space the glasses use. db/setup.js seeds it on the real backend. */
 export const SPACE_ID = "hotel"
 
+/** null: off. A number: one photo every that many ms. "video": a live stream instead of photos. */
+export type FrameMode = number | "video" | null
+
 export const DEFAULT_SETTINGS: Settings = {apiBase: "", user: null, sendMode: "text"}
 
 export function isConfigured(settings: Settings): boolean {
@@ -44,7 +47,7 @@ export interface Status {
   /** Why the latest photo failed, if it did. */
   photoError: string | null
   /** everyMs is the frame-loop interval, or null when the loop is off. */
-  frames: {everyMs: number | null; sent: number; error: string | null}
+  frames: {mode: FrameMode; sent: number; error: string | null}
 }
 
 export interface Channels {
@@ -60,7 +63,7 @@ export interface Channels {
   sendText: Rpc<{text: string}, {accepted: boolean; reason?: string}>
   /** Takes one photo immediately on the glasses and posts it to /api/frames if configured. */
   takePhotoNow: Rpc<null, {ok: boolean; url?: string; tookMs?: number; error?: string}>
-  setFrames: {everyMs: number | null}
+  setFrames: {mode: FrameMode}
 }
 
 declare global {

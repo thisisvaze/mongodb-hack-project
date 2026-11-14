@@ -1,7 +1,7 @@
 import {useEffect, useState} from "react"
 import {MiniappHeader, useSafeArea} from "@mentra/miniapp/ui"
 import type {SendMode, User} from "../shared/api"
-import {isConfigured, type Phase, type Settings, type Status} from "../shared/channels"
+import {isConfigured, type FrameMode, type Phase, type Settings, type Status} from "../shared/channels"
 
 const SEND_MODES: Array<{id: SendMode; label: string}> = [
   {id: "text", label: "Text"},
@@ -9,10 +9,11 @@ const SEND_MODES: Array<{id: SendMode; label: string}> = [
   {id: "both", label: "Both"},
 ]
 
-const FRAME_OPTIONS: Array<{everyMs: number | null; label: string}> = [
-  {everyMs: null, label: "Off"},
-  {everyMs: 2_000, label: "2s"},
-  {everyMs: 5_000, label: "5s"},
+const FRAME_OPTIONS: Array<{mode: FrameMode; label: string}> = [
+  {mode: null, label: "Off"},
+  {mode: 2_000, label: "2s"},
+  {mode: 5_000, label: "5s"},
+  {mode: "video", label: "Video"},
 ]
 
 const PHASE_TEXT: Record<Phase, string> = {
@@ -219,15 +220,18 @@ function Controls({status, onSaved}: {status: Status; onSaved: (next: Status) =>
               key={f.label}
               type="button"
               role="radio"
-              aria-checked={status.frames.everyMs === f.everyMs}
-              className={status.frames.everyMs === f.everyMs ? "active" : ""}
-              onClick={() => mentra.send("setFrames", {everyMs: f.everyMs})}>
+              aria-checked={status.frames.mode === f.mode}
+              className={status.frames.mode === f.mode ? "active" : ""}
+              onClick={() => mentra.send("setFrames", {mode: f.mode})}>
               {f.label}
             </button>
           ))}
         </div>
-        <p className="muted">Sent: {status.frames.sent}. Turns off when the miniapp restarts.</p>
-        {status.frames.everyMs !== null && status.frames.error && <p className="err">{status.frames.error}</p>}
+        <p className="muted">
+          {status.frames.mode === "video" ? "Streaming video to the Mac receiver." : `Photos sent: ${status.frames.sent}.`} Turns
+          off when the miniapp restarts.
+        </p>
+        {status.frames.error && <p className="err">{status.frames.error}</p>}
       </div>
     </section>
   )
