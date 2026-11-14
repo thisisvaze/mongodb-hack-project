@@ -122,16 +122,46 @@ Request:
   "user_id": "u_resident",
   "ts": "2026-11-14T17:02:10Z",
   "text": "I'm putting my keys in my left jacket pocket",
+  "audio": null,
   "image_b64": null,
   "image_url": null
 }
 ```
 
+- `text`: the client's own transcript, or `null` when the client sends audio only.
+- `audio`: the recorded utterance, or `null`. See below.
+- At least one of `text` and `audio` is set. When both are set, the backend chooses which to use.
 - `image_b64`: optional JPEG, base64 without a `data:` prefix. Sent by the browser capture page
   (about 640 px wide, under 200 KB).
 - `image_url`: optional. Sent by the glasses app. It is a signed URL that expires in about
   30 minutes, so download it straight away.
-- At most one of the two is set. Both may be `null`.
+- At most one of the two image fields is set. Both may be `null`.
+
+#### Audio
+
+Each client has a setting, "Send: text, audio or both". The default is text. Audio is recorded
+only between the button press and the end of the utterance, never continuously, to save
+battery. It arrives as one piece with the turn, not as a live stream.
+
+```json
+"audio": {
+  "format": "wav",
+  "sample_rate": 16000,
+  "channels": 1,
+  "data_b64": "..."
+}
+```
+
+- `format`:
+  - `"wav"`: 16-bit PCM in a WAV container. Sent by the browser capture page.
+  - `"pcm_s16le"`: 16-bit little-endian PCM with no header. Sent by the glasses app.
+  - Anything else is passed through as the glasses SDK reported it (for example `"lc3"`).
+    The backend may reject a format it cannot read with 415 and `{ "error": "..." }`.
+- `sample_rate`: in Hz, or `null` when the glasses SDK did not report it.
+- `channels`: always 1.
+- `data_b64`: the audio bytes, base64 without a `data:` prefix.
+- An utterance is capped at 25 seconds. At 16 kHz that is about 800 KB of audio, or about
+  1.1 MB as base64, so the request body limit must allow at least 2 MB.
 
 Response:
 
@@ -140,13 +170,18 @@ Response:
   "kind": "saved",
   "reply_text": "Saved. Keys are in your left jacket pocket.",
   "audio_url": "https://example.trycloudflare.com/audio/r_01.mp3",
-  "memory_ids": ["m_01"]
+  "memory_ids": ["m_01"],
+  "heard_text": "I'm putting my keys in my left jacket pocket",
+  "input_used": "text"
 }
 ```
 
 - `kind`: `"saved" | "answer" | "denied" | "forgot" | "ignored"`
 - `audio_url`: absolute URL of an MP3 of `reply_text`, or `null`. Clients fall back to their own
   text-to-speech when it is `null`.
+- `heard_text`: the words the backend acted on (its own transcript when it used the audio), or
+  `null`. Optional. Clients show it so an audio-only turn is still readable.
+- `input_used`: `"text" | "audio" | null`. Optional.
 - Clients wait up to 15 seconds. Aim for under 3.
 
 ### 3. `POST /api/frames`
