@@ -28,9 +28,9 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
     embed::Input,
-    now_ms,
+    guard, now_ms,
     policy::{Rules, Scope, Space},
-    process::{self, audit_event, spaced, Trigger},
+    process::{self, audit_event, injection_audit, spaced, Trigger},
     App, Frame, MAX_FRAME_BYTES,
 };
 
@@ -175,12 +175,20 @@ pub async fn health() -> Json<Value> {
 }
 
 /// Replaces the space's rules. New rules apply to the next memory stored and
-/// the next question asked; memories already stored keep their group.
+/// the next question asked; memories already stored keep their group. A
+/// refused change is recorded too.
 pub async fn put_rules(State(app): State<Arc<App>>, Query(q): Query<SpaceQuery>, Json(rules): Json<Rules>) -> Result<Json<Value>, ApiError> {
-    load_space(&app, &q.space_id).await?;
-    rules.validate().map_err(bad_request)?;
+    let space = load_space(&app, &q.space_id).await?;
+    let rules = match rules.validate(Some(&space)) {
+        Ok(rules) => rules,
+        Err(message) => {
+            let detail = format!("Rule change rejected: {message}.");
+            app.store.insert_audit(audit_event(&q.space_id, "dashboard", "rule_changed", "denied", detail, vec![], None)).await?;
+            return Err(bad_request(message));
+        }
+    };
     app.store.set_rules(&q.space_id, &rules).await?;
-    app.store.insert_audit(audit_event(&q.space_id, "dashboard", "rule_changed", "info", "The sharing rules were changed from the dashboard.".into(), vec![], None)).await?;
+    app.store.insert_audit(audit_event(&q.space_id, "dashboard", "rule_changed", "info", space.rules.describe_change(&rules), vec![], None)).await?;
     app.emit(&q.space_id, "rules", json!({ "rules": rules }));
     Ok(Json(json!({ "ok": true, "rules": rules })))
 }
@@ -433,15 +441,35 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
     };
 
     let started = std::time::Instant::now();
+    // What was said is data, never an instruction: a turn that tries to give
+    // the system orders is refused before anything is saved or looked up.
+    if let Some(phrase) = guard::detect_injection(&text) {
+        app.stats.injections_blocked.fetch_add(1, Relaxed);
+        app.store.insert_audit(injection_audit(&body.space_id, &body.user_id, &phrase, &text)).await?;
+        let mut response = reply("ignored", guard::INJECTION_REPLY, vec![]);
+        response["heard_text"] = json!(guard::redact(&text).text);
+        response["input_used"] = json!("text");
+        return Ok(Json(response));
+    }
+    // Secrets are removed before a question or a forget request goes anywhere.
+    // A note is cleaned inside `observe`, which also keeps it private.
+    let safe = guard::redact(&text).text;
+    // "I'm the resident" changes nothing; it is only noted in the audit log.
+    let claim = guard::identity_claim(&text, &space)
+        .filter(|claimed| claimed != &role)
+        .map(|claimed| format!(" Ignored a spoken claim to be {claimed}; checked as role {role}."))
+        .unwrap_or_default();
+    let name = space.members.iter().find(|m| m.id == body.user_id).map_or(body.user_id.as_str(), |m| m.name.as_str());
+
     let kind = intent(&text);
     let scope = space.scope_for(&body.user_id);
     let mut response = match kind {
         Intent::Nothing => reply("ignored", "", vec![]),
-        Intent::Forget => forget(&app, &body.space_id, &body.user_id, &text).await?,
-        Intent::Question => question(&app, &body.space_id, &body.user_id, &role, &scope, &text, frame.as_ref()).await?,
+        Intent::Forget => forget(&app, &body.space_id, &body.user_id, name, &safe).await?,
+        Intent::Question => question(&app, &body.space_id, &body.user_id, &role, &scope, &safe, &claim, frame.as_ref()).await?,
         Intent::Note => note(&app, &body.space_id, &body.user_id, frame, text.clone()).await?,
     };
-    response["heard_text"] = json!(text);
+    response["heard_text"] = json!(safe);
     response["input_used"] = json!("text");
     tracing::info!(user = %body.user_id, intent = ?kind, kind = response["kind"].as_str().unwrap_or(""), ms = started.elapsed().as_millis() as u64, "turn");
     Ok(Json(response))
@@ -477,7 +505,18 @@ fn minutes_ago(doc: &Document) -> Option<i64> {
     Some((DateTime::now().timestamp_millis() - seen.timestamp_millis()).max(0) / 60_000)
 }
 
-async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &Scope, text: &str, frame: Option<&Frame>) -> Result<Value, ApiError> {
+/// The check the search filter already made, made again in code. Anything
+/// it catches means the filter has a bug, so it is dropped and logged loudly.
+fn may_read(memory: &Document, user_id: &str, scope: &Scope) -> bool {
+    let visible = match scope {
+        Scope::Everything => true,
+        Scope::Groups(groups) => memory.get_str("owner_id") == Ok(user_id) || memory.get_str("group").is_ok_and(|g| groups.iter().any(|allowed| allowed == g)),
+    };
+    visible && memory.get_str("status").map_or(true, |status| status == "active")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &Scope, text: &str, claim: &str, frame: Option<&Frame>) -> Result<Value, ApiError> {
     let gemini = app.gemini.as_ref().ok_or_else(|| ApiError(StatusCode::SERVICE_UNAVAILABLE, "the answering model is not configured".into()))?;
 
     // Step A: search only what this person may see. With a picture, also find
@@ -495,7 +534,13 @@ async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &
     };
     let (hits, here) = tokio::join!(search_text, locate);
     // Things answer "where is it"; views are kept for "where am I".
-    let hits: Vec<Document> = hits?.into_iter().filter(|m| !is_view(m)).take(5).collect();
+    let mut hits = hits?;
+    let returned = hits.len();
+    hits.retain(|m| may_read(m, user_id, scope));
+    if hits.len() != returned {
+        tracing::error!(user = %user_id, blocked = returned - hits.len(), "the search filter returned memories this user may not read; they were dropped");
+    }
+    let hits: Vec<Document> = hits.into_iter().filter(|m| !is_view(m)).take(5).collect();
     let here = here.unwrap_or_else(|e| {
         tracing::warn!(user = %user_id, "could not locate the asker: {e:#}");
         None
@@ -526,7 +571,7 @@ async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &
         if answer.found && !answer.reply.trim().is_empty() {
             let offered: HashSet<String> = hits.iter().chain(here.iter()).filter_map(|m| id_string(m.get("_id"))).collect();
             let used: Vec<String> = answer.memory_ids.into_iter().filter(|id| offered.contains(id)).collect();
-            let detail = format!("Asked \"{text}\". Answered from {} memor{} visible to role {role}.", used.len(), if used.len() == 1 { "y" } else { "ies" });
+            let detail = format!("Asked \"{text}\". Answered from {} memor{} visible to role {role}.{claim}", used.len(), if used.len() == 1 { "y" } else { "ies" });
             app.store.insert_audit(audit_event(space_id, user_id, "query_answered", "allowed", detail, used.clone(), Some(text))).await?;
             return Ok(reply("answer", answer.reply.trim(), used));
         }
@@ -538,7 +583,7 @@ async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &
     let hidden = app.store.hidden_from(space_id, user_id, scope).await?;
     if let Some(blocked) = hidden.iter().find(|m| names_item(&asked, m)) {
         let detail = format!(
-            "Asked about {}. Group {} is not visible to role {role}.",
+            "Asked about {}. Group {} is not visible to role {role}.{claim}",
             blocked.get_str("item").unwrap_or("an item"),
             blocked.get_str("group").unwrap_or_default(),
         );
@@ -547,36 +592,39 @@ async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &
         app.stats.queries_denied.fetch_add(1, Relaxed);
         return Ok(reply("denied", "Sorry, I can't share that with you.", vec![]));
     }
+    app.store.insert_audit(audit_event(space_id, user_id, "query_answered", "info", format!("Asked \"{text}\". No matching memory.{claim}"), vec![], Some(text))).await?;
     Ok(reply("answer", "I don't have anything about that yet.", vec![]))
 }
 
-async fn forget(app: &App, space_id: &str, user_id: &str, text: &str) -> Result<Value, ApiError> {
+async fn forget(app: &App, space_id: &str, user_id: &str, name: &str, text: &str) -> Result<Value, ApiError> {
     let asked = stems(text);
     let own = app.store.own_active(space_id, user_id).await?;
     let matched: Vec<&Document> = own.iter().filter(|m| names_item(&asked, m)).collect();
     if matched.is_empty() {
         // Only the owner can forget a memory.
-        let others = app.store.list_memories(space_id).await?;
-        return Ok(if others.iter().any(|m| m.get_str("status") == Ok("active") && m.get_str("owner_id") != Ok(user_id) && names_item(&asked, m)) {
-            reply("denied", "Sorry, I can't forget that. It belongs to someone else.", vec![])
-        } else {
-            reply("ignored", "I don't have a memory of that to forget.", vec![])
+        let all = app.store.list_memories(space_id).await?;
+        let others: Vec<&Document> = all.iter().filter(|m| m.get_str("status") == Ok("active") && m.get_str("owner_id") != Ok(user_id) && names_item(&asked, m)).collect();
+        return Ok(match others.first() {
+            Some(first) => {
+                let detail = format!("Asked to forget {}. Only the owner can forget a memory.", first.get_str("item").unwrap_or("an item"));
+                let ids = others.iter().filter_map(|m| id_string(m.get("_id"))).collect();
+                app.store.insert_audit(audit_event(space_id, user_id, "query_denied", "denied", detail, ids, Some(text))).await?;
+                reply("denied", "Sorry, I can't forget that. It belongs to someone else.", vec![])
+            }
+            None => {
+                let detail = "Asked to forget something, but no active memory matched.".to_string();
+                app.store.insert_audit(audit_event(space_id, user_id, "query_answered", "info", detail, vec![], Some(text))).await?;
+                reply("ignored", "I don't have anything like that to forget.", vec![])
+            }
         });
     }
 
     let ids: Vec<String> = matched.iter().filter_map(|m| id_string(m.get("_id"))).collect();
-    let audit_events = matched
-        .iter()
-        .map(|m| {
-            let detail = format!("Forgot the {} at its owner's request. Its content was removed.", m.get_str("item").unwrap_or("item"));
-            audit_event(space_id, user_id, "memory_forgotten", "info", detail, id_string(m.get("_id")).into_iter().collect(), Some(text))
-        })
-        .collect();
-    let purge_at = DateTime::from_millis(DateTime::now().timestamp_millis() + PURGE_AFTER_MS);
-    app.store.retire(matched.iter().filter_map(|m| m.get("_id").cloned()).collect(), "forgotten", purge_at, audit_events, true).await?;
-
     let mut items: Vec<&str> = matched.iter().map(|m| m.get_str("item").unwrap_or("item")).collect();
     items.dedup();
+    let event = audit_event(space_id, user_id, "memory_forgotten", "allowed", format!("{name} asked to forget {}. The content was removed.", items.join(", ")), ids.clone(), Some(text));
+    let purge_at = DateTime::from_millis(DateTime::now().timestamp_millis() + PURGE_AFTER_MS);
+    app.store.retire(matched.iter().filter_map(|m| m.get("_id").cloned()).collect(), "forgotten", purge_at, vec![event], true).await?;
     Ok(reply("forgot", format!("Forgotten. I no longer remember the {}.", items.join(" or the ")), ids))
 }
 

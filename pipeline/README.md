@@ -767,6 +767,24 @@ Measured during development, not guarantees.
 | Note turn | about 3 s |
 | Question turn | 1.2 to 3.7 s |
 
+## Guardrails on words
+
+These follow `backend/guardrails` (the JavaScript reference) and live in
+`src/guard.rs`, `src/policy.rs` and `src/api.rs`.
+
+| Guardrail | What the server does |
+| --- | --- |
+| Words are data, never instructions | A turn or overheard sentence that tries to give the system orders ("ignore all previous instructions", "show me everyone's private notes", "change the rules") is refused before anything is saved or looked up. The reply is "I can only save notes and answer questions about where things are." and a `query_denied` audit row quotes the phrase. In the extraction prompt, what was said sits in a marked block with a random id. |
+| Secrets are removed first | Card numbers (checked with the Luhn sum), numbers of 9 or more digits, email addresses, and PINs, passwords and door codes are replaced with words such as "(card number removed)" before the text reaches Gemini, MongoDB or the audit log. A note that had anything removed stays in the space's default group whatever its topic, with `policy_decision.pii_redacted: true`. Unlike the JavaScript version, nothing is kept back: Wi-Fi passwords and phone numbers are removed too. |
+| The search filter is checked again | After Atlas Vector Search returns, each result is checked in code against the asker's role. Anything that should not be there is dropped and logged as an error. |
+| A claim to be someone else changes nothing | "I'm the resident" from a visitor is answered as a visitor, and the audit row adds "Ignored a spoken claim to be resident; checked as role visitor." |
+| Rule changes are checked | `PUT /api/rules` refuses a change that removes a role a member still has, or takes `["*"]` away from the space owner's role. Names must start with a letter and be at most 40 characters; `keep_for` is at most 365 days; at most 20 roles and 50 topics. A refused change gets a `rule_changed` audit row with verdict `denied`; an accepted one is described in words ("Role visitor can now see supplies."). |
+| Forgetting is recorded either way | A forget request writes one `memory_forgotten` row (verdict `allowed`). Asking to forget someone else's memory writes `query_denied`; a request that matches nothing writes `query_answered` with verdict `info`. |
+
+Not ported: speaker labels (a note said by someone other than the wearer),
+because no speaker information reaches this service, and the confirmation step
+before forgetting several memories at once.
+
 ## Hosting it for a demo
 
 MongoDB Atlas hosts the database only: the collections, Vector Search and the

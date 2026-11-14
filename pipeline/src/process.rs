@@ -14,7 +14,7 @@ use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime, Document};
 
 use crate::{
     embed::{self, Input},
-    gate,
+    gate, guard,
     gemini::Extracted,
     policy::{self, Decision, Space},
     store::Change,
@@ -27,6 +27,7 @@ const VIEW_TOPIC: &str = "house_guide";
 const MAX_TRANSCRIPT_CHARS: usize = 2000;
 
 /// One thing to process: a changed view, a spoken note, or both.
+#[derive(Clone)]
 pub struct Trigger {
     pub user_id: String,
     /// The space id (`space_id` in the database and the API).
@@ -62,6 +63,13 @@ pub fn spaced(key: &str) -> String {
     key.replace('_', " ")
 }
 
+/// The audit row for a refused instruction. The words are stored with secrets removed.
+pub fn injection_audit(space_id: &str, user_id: &str, phrase: &str, text: &str) -> Document {
+    let quoted: String = if phrase.chars().count() > 60 { phrase.chars().take(57).chain("...".chars()).collect() } else { phrase.to_string() };
+    let detail = format!("Blocked an instruction in what was said: \"{quoted}\". Text that is seen or heard is never treated as a command, so nothing was saved or changed.");
+    audit_event(space_id, user_id, "query_denied", "denied", detail, vec![], Some(&guard::redact(text).text))
+}
+
 /// A row for `audit_events`, in the shape of the API contract's AuditEntry.
 pub fn audit_event(space_id: &str, actor_id: &str, action: &str, verdict: &str, detail: String, memory_ids: Vec<String>, query_text: Option<&str>) -> Document {
     doc! {
@@ -83,6 +91,25 @@ pub async fn observe(app: &App, t: &Trigger) -> anyhow::Result<Vec<Stored>> {
     let stats = &app.stats;
     let now = DateTime::now();
     let mut stored: Vec<Stored> = Vec::new();
+
+    // Words are data, never instructions. A sentence that tries to give the
+    // system orders is refused and recorded, and nothing from it is saved.
+    if let Some(phrase) = guard::detect_injection(&t.text) {
+        stats.injections_blocked.fetch_add(1, Relaxed);
+        app.store.insert_audit(injection_audit(&t.venue_id, &t.user_id, &phrase, &t.text)).await?;
+        return Ok(stored);
+    }
+    // Secrets and identity numbers are removed before a model, the database
+    // or the audit log sees the words.
+    let redacted = guard::redact(&t.text);
+    let cleaned;
+    let t = if redacted.found.is_empty() {
+        t
+    } else {
+        cleaned = Trigger { text: redacted.text, ..t.clone() };
+        &cleaned
+    };
+    let removed = redacted.found;
 
     // Without an extraction model the capture is still logged, but no memories are made.
     if let Some(gemini) = &app.gemini {
@@ -110,7 +137,7 @@ pub async fn observe(app: &App, t: &Trigger) -> anyhow::Result<Vec<Stored>> {
         let decided: Vec<(Extracted, Decision)> = items
             .into_iter()
             .map(|item| {
-                let decision = policy::decide(&space, &item.topic, item.contains_pii, now);
+                let decision = policy::decide_with_removed(&space, &item.topic, item.contains_pii, &removed, now);
                 (item, decision)
             })
             .collect();
@@ -129,7 +156,7 @@ pub async fn observe(app: &App, t: &Trigger) -> anyhow::Result<Vec<Stored>> {
         // frame may be seen by everyone who can see the view.
         let view = match (scene, image) {
             (Some(scene), Some(_)) if t.reason == "manual" && t.text.is_empty() => {
-                let decision = policy::decide(&space, VIEW_TOPIC, false, now);
+                let decision = policy::decide_with_removed(&space, VIEW_TOPIC, false, &[], now);
                 let shareable = decided.iter().all(|(item, _)| !item.contains_pii) && carries(&decision);
                 shareable.then_some((scene, decision))
             }
@@ -281,8 +308,8 @@ pub async fn reconcile(app: &App, t: &Trigger, space: &Space, mut item: Extracte
             "topic": &decision.topic,
             "group": &decision.group,
             "reason": &decision.reason,
-            // True when a picture existed but was kept off this memory.
-            "pii_redacted": t.frame.is_some() && picture.is_none(),
+            // True when words were removed, or a picture existed but was kept off this memory.
+            "pii_redacted": decision.pii_redacted || (t.frame.is_some() && picture.is_none()),
             "checked_at": now,
         },
         "reinforcement_count": 1_i32,
@@ -370,7 +397,7 @@ mod tests {
         let see = |t: Trigger, item: Extracted| {
             let (app, home) = (app.clone(), home.clone());
             async move {
-                let decision = policy::decide(&home, &item.topic, item.contains_pii, now);
+                let decision = policy::decide_with_removed(&home, &item.topic, item.contains_pii, &[], now);
                 let vector = app.embedder.embed(&[Input { text: item.summary.clone(), jpeg_b64: None }], "document").await.unwrap().0.remove(0);
                 reconcile(&app, &t, &home, item, decision, vector, None, true, now).await.unwrap()
             }

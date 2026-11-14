@@ -8,6 +8,7 @@ mod api;
 mod embed;
 mod gate;
 mod gemini;
+mod guard;
 mod policy;
 mod process;
 mod store;
@@ -208,6 +209,7 @@ pub struct Stats {
     pub views_stored: AtomicU64,
     pub failed: AtomicU64,
     pub queries_denied: AtomicU64,
+    pub injections_blocked: AtomicU64,
     pub guides: AtomicU64,
     pub guide_ms: AtomicU64,
     pub processed: AtomicU64,
@@ -326,7 +328,7 @@ pub async fn build_app(cfg: Config) -> anyhow::Result<Arc<App>> {
         (None, _) => None,
     };
     let (events, _) = broadcast::channel(256);
-    Ok(Arc::new(App { stats: Stats::default(), embedder, gemini, store, http: reqwest::Client::new(), events, sessions: Mutex::default(), cfg }))
+    Ok(Arc::new(App { stats: Stats::default(), embedder, gemini, store, http: reqwest::Client::builder().user_agent("safespace-pipeline/0.1").build()?, events, sessions: Mutex::default(), cfg }))
 }
 
 pub fn now_ms() -> u64 {
@@ -481,6 +483,7 @@ async fn stats(State(app): State<Arc<App>>) -> Json<Value> {
         },
         "failed": s.failed.load(Relaxed),
         "queries_denied": s.queries_denied.load(Relaxed),
+        "injections_blocked": s.injections_blocked.load(Relaxed),
         "live_guidance": { "frames": s.guides.load(Relaxed), "avg_ms": s.guide_ms.load(Relaxed).checked_div(s.guides.load(Relaxed)).unwrap_or(0) },
         "avg_ms": { "extract": avg(&s.extract_ms), "embed": avg(&s.embed_ms), "store": avg(&s.store_ms) },
     }))
