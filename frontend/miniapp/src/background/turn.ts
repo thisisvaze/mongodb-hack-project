@@ -26,7 +26,7 @@ const MAX_LISTEN_MS = 25_000 // hard cap on one utterance
 const END_SILENCE_MS = 1_250 // VAD silence threshold to end an audio utterance
 const TONE_WAIT_MS = 1_200 // longest the listening beep may delay capture
 const SPOKEN_CUE_WAIT_MS = 3_000 // same for spoken fallback cue
-const PHOTO_WAIT_MS = 2_500 // longest a finished utterance waits for its photo
+const PHOTO_WAIT_MS = 5_000 // longest a finished utterance waits for its photo
 const MAX_AUDIO_BYTES = 1_200_000 // ~37 s of 16 kHz mono 16-bit PCM
 
 const SAY = {

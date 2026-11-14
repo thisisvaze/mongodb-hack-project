@@ -7,7 +7,7 @@
  */
 
 import {registerMiniapp} from "@mentra/miniapp/background"
-import {getState, messageOf, normalizeBase, type SendMode} from "../shared/api"
+import {getState, messageOf, normalizeBase, postFrame, timestamp, type SendMode} from "../shared/api"
 import {DEFAULT_SETTINGS, isConfigured, type Channels, type Settings, type Status} from "../shared/channels"
 import {createCamera, createFrameLoop} from "./camera"
 import {createTurns} from "./turn"
@@ -30,7 +30,7 @@ registerMiniapp<Channels>(async (session) => {
     error: null,
     photo: null,
     photoError: null,
-    frames: {on: false, sent: 0, error: null},
+    frames: {everyMs: null, sent: 0, error: null},
   }
 
   const push = (patch: Partial<Status>) => {
@@ -97,8 +97,30 @@ registerMiniapp<Channels>(async (session) => {
     return {accepted: true}
   })
 
-  session.ui.on("setFrames", ({on}) => frames.set(on))
-  session.ui.onOpen(() => session.ui.send("status", status))
+  session.ui.handle("takePhotoNow", async () => {
+    const t0 = Date.now()
+    const url = await camera.capture()
+    if (!url) {
+      return {ok: false, error: status.photoError ?? "Glasses did not return a photo."}
+    }
+    const cur = settings()
+    if (isConfigured(cur)) {
+      await postFrame(cur.apiBase, {
+        space_id: cur.spaceId,
+        user_id: cur.user!.id,
+        ts: timestamp(),
+        image_b64: null,
+        image_url: url,
+      }).catch((err: unknown) => console.warn("postFrame failed:", messageOf(err)))
+    }
+    return {ok: true, url, tookMs: Date.now() - t0}
+  })
+
+  session.ui.on("setFrames", ({everyMs}) => frames.set(everyMs))
+  session.ui.onOpen(() => {
+    camera.warm()
+    session.ui.send("status", status)
+  })
 
   // Short and long presses both start a turn; see the README for why.
   session.input.onButtonPress((press) => {

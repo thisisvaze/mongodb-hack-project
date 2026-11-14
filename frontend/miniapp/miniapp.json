@@ -3,7 +3,7 @@
   "packageName": "com.safespace.glasses",
   "version": "1.0.0",
   "name": "SafeSpace",
-  "description": "Press the glasses button and speak a note or a question about your home.",
+  "description": "Governed spatial memory on smart glasses.",
   "icon": "icon.png",
   "type": "standard",
   "sdkVersion": "0.3.0",

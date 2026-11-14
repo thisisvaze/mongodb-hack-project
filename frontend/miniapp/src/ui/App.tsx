@@ -1,19 +1,31 @@
-import {useEffect, useState, type FormEvent} from "react"
+import {useEffect, useState} from "react"
 import {MiniappHeader, useSafeArea} from "@mentra/miniapp/ui"
 import type {SendMode, User} from "../shared/api"
-import {isConfigured, type Phase, type Status} from "../shared/channels"
+import {isConfigured, type Phase, type Settings, type Status} from "../shared/channels"
 
-const PHASE_LABEL: Record<Phase, string> = {
-  idle: "Ready. Press the glasses button to talk.",
+const SPACES = [
+  {id: "hotel", label: "Hotel 412"},
+  {id: "home", label: "Home"},
+  {id: "office", label: "Office"},
+] as const
+
+const SEND_MODES: Array<{id: SendMode; label: string}> = [
+  {id: "text", label: "Text"},
+  {id: "audio", label: "Audio"},
+  {id: "both", label: "Both"},
+]
+
+const FRAME_OPTIONS: Array<{everyMs: number | null; label: string}> = [
+  {everyMs: null, label: "Off"},
+  {everyMs: 2_000, label: "2s"},
+  {everyMs: 5_000, label: "5s"},
+]
+
+const PHASE_TEXT: Record<Phase, string> = {
+  idle: "Press glasses button to speak",
   listening: "Listening…",
-  sending: "Sending…",
+  sending: "Thinking…",
   speaking: "Speaking…",
-}
-
-const SEND_LABEL: Record<SendMode, string> = {
-  text: "Text only (saves battery)",
-  audio: "Raw audio only",
-  both: "Both text and audio",
 }
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
@@ -43,10 +55,8 @@ export function App() {
           <p className="muted">Connecting…</p>
         ) : (
           <>
-            <StatusCard status={status} />
-            <TypedTurn disabled={!isConfigured(status.settings)} />
-            <Setup status={status} />
-            <Frames status={status} />
+            <LiveCard status={status} />
+            <Controls status={status} onSaved={setStatus} />
           </>
         )}
       </main>
@@ -54,215 +64,195 @@ export function App() {
   )
 }
 
-function StatusCard({status}: {status: Status}) {
-  const {settings, reply, photo, audioSent, inputUsed} = status
-  const configured = isConfigured(settings)
+function LiveCard({status}: {status: Status}) {
+  const configured = isConfigured(status.settings)
+  const [snapping, setSnapping] = useState(false)
+
+  const snap = async () => {
+    setSnapping(true)
+    try {
+      await mentra.request("takePhotoNow", null, {timeout: 50_000})
+    } catch {
+      // Error surfaces on status.photoError.
+    } finally {
+      setSnapping(false)
+    }
+  }
 
   return (
-    <section aria-live="polite">
-      <h2>Status</h2>
-      {configured ? (
-        <p className="state">{PHASE_LABEL[status.phase]}</p>
-      ) : (
-        <p className="state warn">Not configured. Set the API base URL and the user below.</p>
+    <section className="card" aria-live="polite">
+      <div className="status-top">
+        <span className={`dot ${configured ? status.phase : "off"}`} aria-hidden="true" />
+        <p className="phase">{configured ? PHASE_TEXT[status.phase] : "Connect server & choose wearer"}</p>
+        <button type="button" className="ghost" onClick={snap} disabled={snapping}>
+          {snapping ? "Capturing…" : "Test camera"}
+        </button>
+      </div>
+
+      {status.heard && <p className="said">“{status.heard}”</p>}
+
+      {status.reply && (
+        <p className={`reply kind-${status.reply.kind}`}>
+          <span className="badge">{status.reply.kind}</span>
+          <span>{status.reply.text}</span>
+        </p>
       )}
-      <dl>
-        <dt>User</dt>
-        <dd>{settings.user ? `${settings.user.name} (${settings.user.role})` : "not chosen"}</dd>
-        <dt>Space</dt>
-        <dd>{settings.spaceId}</dd>
-        <dt>Send</dt>
-        <dd>{SEND_LABEL[settings.sendMode]}</dd>
-        <dt>Camera</dt>
-        <dd>{status.hasCamera === null ? "no glasses connected" : status.hasCamera ? "yes" : "none on these glasses"}</dd>
-        <dt>Heard</dt>
-        <dd>{status.heard ?? "nothing yet"}</dd>
-        {audioSent && (
-          <>
-            <dt>Audio</dt>
-            <dd>
-              {audioSent.kb} KB ({audioSent.format})
-            </dd>
-          </>
-        )}
-        {inputUsed && (
-          <>
-            <dt>Used</dt>
-            <dd>{inputUsed}</dd>
-          </>
-        )}
-        <dt>Reply</dt>
-        <dd>{reply ? `${reply.kind}: ${reply.text}` : "nothing yet"}</dd>
-      </dl>
-      {status.error && <p className="warn">Turn failed: {status.error}</p>}
-      {status.photoError && <p className="warn">Photo failed: {status.photoError}</p>}
-      {photo && (
-        <figure>
-          <img src={photo.url} alt="Last photo from the glasses" />
-          <figcaption>Last photo, taken in {(photo.tookMs / 1000).toFixed(1)} s</figcaption>
+
+      {status.error && <p className="err">{status.error}</p>}
+      {status.photoError && <p className="err">{status.photoError}</p>}
+
+      {status.photo && (
+        <figure className="shot">
+          <img src={status.photo.url} alt="Latest glasses capture" />
+          <figcaption>{(status.photo.tookMs / 1000).toFixed(1)}s</figcaption>
         </figure>
       )}
     </section>
   )
 }
 
-function TypedTurn({disabled}: {disabled: boolean}) {
-  const [text, setText] = useState("")
-  const [note, setNote] = useState<string | null>(null)
+function Controls({status, onSaved}: {status: Status; onSaved: (next: Status) => void}) {
+  const saved = status.settings
+  const [apiBase, setApiBase] = useState(saved.apiBase)
+  const [users, setUsers] = useState<User[]>(saved.user ? [saved.user] : [])
+  const [connNote, setConnNote] = useState<{ok: boolean; text: string} | null>(null)
+  const [loading, setLoading] = useState(false)
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
+  const persist = async (patch: Partial<Settings>, nextUsers?: User[]) => {
+    const merged: Settings = {...saved, apiBase, ...patch}
     try {
-      const result = await mentra.request("sendText", {text}, {timeout: 10_000})
-      setNote(result.accepted ? null : (result.reason ?? "Not sent."))
-      if (result.accepted) setText("")
+      const updated = await mentra.request("saveSettings", merged, {timeout: 10_000})
+      onSaved(updated)
+      setApiBase(updated.settings.apiBase)
+      if (nextUsers) setUsers(nextUsers)
     } catch (err) {
-      setNote(errorText(err))
+      setConnNote({ok: false, text: errorText(err)})
     }
   }
 
-  return (
-    <section>
-      <h2>Type a turn</h2>
-      <form onSubmit={submit} className="row">
-        <input
-          aria-label="Text to send as a turn"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          placeholder="Where are my keys?"
-        />
-        <button type="submit" disabled={disabled || text.trim() === ""}>
-          Send
-        </button>
-      </form>
-      <p className="muted">Typed turns always send text only. The reply is spoken.</p>
-      {note && <p className="warn">{note}</p>}
-    </section>
-  )
-}
-
-function Setup({status}: {status: Status}) {
-  const saved = status.settings
-  const [apiBase, setApiBase] = useState(saved.apiBase)
-  const [spaceId, setSpaceId] = useState(saved.spaceId)
-  const [userId, setUserId] = useState(saved.user?.id ?? "")
-  const [sendMode, setSendMode] = useState<SendMode>(saved.sendMode)
-  const [users, setUsers] = useState<User[]>(saved.user ? [saved.user] : [])
-  const [result, setResult] = useState<{ok: boolean; text: string} | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const test = async () => {
-    setBusy(true)
-    setResult(null)
+  const connectSpace = async (targetBase: string, targetSpace: string) => {
+    if (!targetBase.trim()) return
+    setLoading(true)
+    setConnNote(null)
     try {
-      const state = await mentra.request("testConnection", {apiBase, spaceId}, {timeout: 15_000})
-      setUsers(state.users)
-      setUserId((current) => (state.users.some((user) => user.id === current) ? current : ""))
-      setResult({ok: true, text: `Connected: ${state.users.length} users, ${state.memories} memories.`})
+      const res = await mentra.request("testConnection", {apiBase: targetBase, spaceId: targetSpace}, {timeout: 15_000})
+      setUsers(res.users)
+      const keepUser = res.users.find((u) => u.id === saved.user?.id) ?? res.users[0] ?? null
+      await persist({apiBase: targetBase, spaceId: targetSpace, user: keepUser}, res.users)
+      setConnNote({ok: true, text: "Connected"})
     } catch (err) {
-      setResult({ok: false, text: `Failed: ${errorText(err)}`})
+      setConnNote({ok: false, text: errorText(err)})
     } finally {
-      setBusy(false)
+      setLoading(false)
     }
   }
 
   useEffect(() => {
-    if (saved.apiBase) void test()
+    if (saved.apiBase) void connectSpace(saved.apiBase, saved.spaceId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const save = async () => {
-    setBusy(true)
-    try {
-      const user = users.find((candidate) => candidate.id === userId) ?? null
-      const next = await mentra.request("saveSettings", {apiBase, spaceId, user, sendMode}, {timeout: 10_000})
-      setApiBase(next.settings.apiBase)
-      setSpaceId(next.settings.spaceId)
-      setSendMode(next.settings.sendMode)
-      setResult({ok: true, text: "Saved."})
-    } catch (err) {
-      setResult({ok: false, text: `Not saved: ${errorText(err)}`})
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const unsaved =
-    apiBase !== saved.apiBase ||
-    spaceId !== saved.spaceId ||
-    userId !== (saved.user?.id ?? "") ||
-    sendMode !== saved.sendMode
-
   return (
-    <section>
-      <h2>Setup</h2>
-      <label>
-        API base URL
-        <input
-          value={apiBase}
-          onChange={(event) => setApiBase(event.target.value)}
-          placeholder="https://example.trycloudflare.com"
-          inputMode="url"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-        />
-      </label>
-      <label>
-        Space id
-        <input
-          value={spaceId}
-          onChange={(event) => setSpaceId(event.target.value)}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-        />
-      </label>
-      <button type="button" className="secondary" onClick={test} disabled={busy || apiBase.trim() === ""}>
-        Test connection
-      </button>
-      <label>
-        This wearer is
-        <select value={userId} onChange={(event) => setUserId(event.target.value)}>
-          <option value="">{users.length ? "Choose a user" : "Test the connection to load users"}</option>
-          {users.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.name} ({user.role})
-            </option>
+    <section className="card">
+      <div className="field">
+        <label htmlFor="server-url">Server</label>
+        <div className="row">
+          <input
+            id="server-url"
+            value={apiBase}
+            onChange={(e) => setApiBase(e.target.value)}
+            placeholder="http://192.168.6.193:8787"
+            inputMode="url"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          <button
+            type="button"
+            onClick={() => void connectSpace(apiBase, saved.spaceId)}
+            disabled={loading || apiBase.trim() === ""}>
+            {loading ? "…" : "Connect"}
+          </button>
+        </div>
+        {connNote && <p className={connNote.ok ? "ok" : "err"}>{connNote.text}</p>}
+      </div>
+
+      <div className="field">
+        <span className="label">Space</span>
+        <div className="seg" role="radiogroup" aria-label="Space">
+          {SPACES.map((sp) => (
+            <button
+              key={sp.id}
+              type="button"
+              role="radio"
+              aria-checked={saved.spaceId === sp.id}
+              className={saved.spaceId === sp.id ? "active" : ""}
+              disabled={loading}
+              onClick={() => void connectSpace(apiBase || saved.apiBase, sp.id)}>
+              {sp.label}
+            </button>
           ))}
-        </select>
-      </label>
-      <label>
-        Send with each spoken turn
-        <select value={sendMode} onChange={(event) => setSendMode(event.target.value as SendMode)}>
-          <option value="text">Text only (default, saves battery)</option>
-          <option value="audio">Raw audio only</option>
-          <option value="both">Both text and raw audio</option>
-        </select>
-      </label>
-      <button type="button" onClick={save} disabled={busy || !unsaved}>
-        Save
-      </button>
-      {unsaved && <p className="muted">Unsaved changes.</p>}
-      {result && <p className={result.ok ? "ok" : "warn"}>{result.text}</p>}
-    </section>
-  )
-}
+        </div>
+      </div>
 
-function Frames({status}: {status: Status}) {
-  const {on, sent, error} = status.frames
+      {users.length > 0 && (
+        <div className="field">
+          <span className="label">Wearer</span>
+          <div className="pills" role="radiogroup" aria-label="Wearer">
+            {users.map((u) => {
+              const active = saved.user?.id === u.id
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  className={active ? "pill active" : "pill"}
+                  onClick={() => void persist({user: u})}>
+                  <span className="pill-name">{u.name}</span>
+                  <span className="pill-role">{u.role}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
-  return (
-    <section>
-      <h2>Camera frames</h2>
-      <label className="check">
-        <input type="checkbox" checked={on} onChange={(event) => mentra.send("setFrames", {on: event.target.checked})} />
-        Send a photo to the server every 5 seconds
-      </label>
-      <p className="muted">
-        Off whenever the miniapp restarts. Frames sent: {sent}.
-      </p>
-      {on && error && <p className="warn">Last frame failed: {error}</p>}
+      <div className="field">
+        <span className="label">Mic payload</span>
+        <div className="seg" role="radiogroup" aria-label="Mic payload">
+          {SEND_MODES.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              role="radio"
+              aria-checked={saved.sendMode === m.id}
+              className={saved.sendMode === m.id ? "active" : ""}
+              onClick={() => void persist({sendMode: m.id})}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="field">
+        <span className="label">Camera frames</span>
+        <div className="seg" role="radiogroup" aria-label="Camera frames">
+          {FRAME_OPTIONS.map((f) => (
+            <button
+              key={f.label}
+              type="button"
+              role="radio"
+              aria-checked={status.frames.everyMs === f.everyMs}
+              className={status.frames.everyMs === f.everyMs ? "active" : ""}
+              onClick={() => mentra.send("setFrames", {everyMs: f.everyMs})}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <p className="muted">Sent: {status.frames.sent}. Turns off when the miniapp restarts.</p>
+        {status.frames.everyMs !== null && status.frames.error && <p className="err">{status.frames.error}</p>}
+      </div>
     </section>
   )
 }

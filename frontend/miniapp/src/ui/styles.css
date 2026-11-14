@@ -1,32 +1,36 @@
-/*
- * The WebView fills the whole screen, so the .app background (padded by the
- * safe-area insets in App.tsx) also shows behind the status bar and the home
- * indicator. <MentraProvider> mirrors the Mentra App's theme as
- * <html class="dark">, so both sets of colors are defined.
- */
 :root {
   color-scheme: light;
-  --background: #ffffff;
-  --foreground: #111111;
-  --muted: #5f5f5f;
-  --accent: #2f6fde;
-  --surface: #f0f0f0;
-  --border: #d0d0d0;
-  --warn: #b3261e;
-  --ok: #1b6e3c;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bg: #f7f8fa;
+  --card: #ffffff;
+  --ink: #111418;
+  --muted: #5f6773;
+  --line: #e1e5eb;
+  --wash: #eef1f6;
+  --accent: #2563eb;
+  --accent-ink: #ffffff;
+  --ok: #15803d;
+  --err: #b91c1c;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
 }
 
 :root.dark {
   color-scheme: dark;
-  --background: #0b0b0b;
-  --foreground: #f5f5f5;
-  --muted: #a0a0a0;
-  --accent: #4a9eff;
-  --surface: #1c1c1c;
-  --border: #3a3a3a;
-  --warn: #ff8a80;
-  --ok: #7bd49a;
+  --bg: #0b0d11;
+  --card: #141820;
+  --ink: #f3f5f8;
+  --muted: #8b94a3;
+  --line: #252c38;
+  --wash: #1c222d;
+  --accent: #3b82f6;
+  --accent-ink: #ffffff;
+  --ok: #4ade80;
+  --err: #f87171;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
@@ -34,110 +38,139 @@ body {
 }
 
 .app {
-  box-sizing: border-box;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--bg);
+  color: var(--ink);
 }
 
 .content {
   display: flex;
   flex-direction: column;
-  gap: 28px;
-  padding: 8px 16px 32px;
-}
-
-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-h2 {
-  margin: 0;
-  font-size: 1.05rem;
+  gap: 14px;
+  padding: 8px 16px 28px;
 }
 
 p,
-dl,
 figure {
   margin: 0;
 }
 
-.state {
-  font-size: 1.1rem;
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.status-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex: none;
+  background: var(--ok);
+}
+
+.dot.off {
+  background: var(--muted);
+}
+
+.dot.listening,
+.dot.sending,
+.dot.speaking {
+  background: var(--accent);
+}
+
+.phase {
+  flex: 1;
+  font-size: 0.96rem;
   font-weight: 600;
 }
 
-.muted,
-figcaption {
-  color: var(--muted);
-  font-size: 0.9rem;
+.ghost {
+  background: var(--wash);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  font-weight: 500;
 }
 
-.warn {
-  color: var(--warn);
-}
-
-.ok {
-  color: var(--ok);
-}
-
-dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 12px;
-}
-
-dt {
+.said {
+  font-size: 0.95rem;
   color: var(--muted);
 }
 
-dd {
-  margin: 0;
-  overflow-wrap: anywhere;
+.reply {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.96rem;
+  line-height: 1.4;
 }
 
-img {
+.badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--wash);
+  color: var(--muted);
+  flex: none;
+}
+
+.reply.kind-denied .badge {
+  background: rgba(185, 28, 28, 0.14);
+  color: var(--err);
+}
+
+.shot {
+  position: relative;
+}
+
+.shot img {
   display: block;
   width: 100%;
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
-label {
+.shot figcaption {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 0.75rem;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 0.9rem;
+  gap: 6px;
+}
+
+label,
+.label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--muted);
-}
-
-label.check {
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  font-size: 1rem;
-  color: var(--foreground);
-}
-
-input:not([type="checkbox"]),
-select {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  font-size: 1rem;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--foreground);
-}
-
-input[type="checkbox"] {
-  width: 22px;
-  height: 22px;
 }
 
 .row {
@@ -145,25 +178,99 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
-.row button {
-  flex: none;
+input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--wash);
+  color: var(--ink);
 }
 
 button {
-  font-size: 1rem;
-  padding: 12px 20px;
-  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 10px 14px;
+  border-radius: 10px;
   border: none;
   background: var(--accent);
-  color: white;
-}
-
-button.secondary {
-  background: var(--surface);
-  color: var(--foreground);
-  border: 1px solid var(--border);
+  color: var(--accent-ink);
 }
 
 button:disabled {
   opacity: 0.5;
+}
+
+.seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  background: var(--wash);
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.seg button {
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 6px;
+  font-size: 0.88rem;
+  border-radius: 7px;
+}
+
+.seg button.active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.pills {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 6px;
+}
+
+.pill {
+  background: var(--wash);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.pill.active {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.pill-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.pill-role {
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.ok {
+  color: var(--ok);
+  font-size: 0.84rem;
+}
+
+.err {
+  color: var(--err);
+  font-size: 0.86rem;
 }

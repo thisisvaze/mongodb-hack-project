@@ -16,7 +16,7 @@ export interface Settings {
   sendMode: SendMode
 }
 
-export const DEFAULT_SETTINGS: Settings = {apiBase: "", spaceId: "home", user: null, sendMode: "text"}
+export const DEFAULT_SETTINGS: Settings = {apiBase: "", spaceId: "hotel", user: null, sendMode: "text"}
 
 export function isConfigured(settings: Settings): boolean {
   return settings.apiBase !== "" && settings.user !== null
@@ -41,7 +41,8 @@ export interface Status {
   photo: {url: string; tookMs: number} | null
   /** Why the latest photo failed, if it did. */
   photoError: string | null
-  frames: {on: boolean; sent: number; error: string | null}
+  /** everyMs is the frame-loop interval, or null when the loop is off. */
+  frames: {everyMs: number | null; sent: number; error: string | null}
 }
 
 export interface Channels {
@@ -55,7 +56,9 @@ export interface Channels {
   testConnection: Rpc<{apiBase: string; spaceId: string}, {users: User[]; memories: number}>
   /** Starts a typed turn. Progress arrives on `status`. */
   sendText: Rpc<{text: string}, {accepted: boolean; reason?: string}>
-  setFrames: {on: boolean}
+  /** Takes one photo immediately on the glasses and posts it to /api/frames if configured. */
+  takePhotoNow: Rpc<null, {ok: boolean; url?: string; tookMs?: number; error?: string}>
+  setFrames: {everyMs: number | null}
 }
 
 declare global {
