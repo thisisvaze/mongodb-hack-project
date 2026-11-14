@@ -1,40 +1,42 @@
 # 03 — Features in Detail & Continuous ElevenLabs Navigation
 
 ## Feature 1: Fused Camera + Microphone Memory
-Cameras alone fail whenever an item goes out of line-of-sight (pockets, backpacks, closed drawers, hotel safes). Our ingest handles **three input modes seamlessly**:
-1. **Silent Visual Sighting (Camera only):** Glasses pan past the table and spot `ibuprofen_bottle` left of the kettle → indexed via `voyage-multimodal-3.5` + Gemini tactile anchor.
+Cameras alone fail whenever an item goes out of line-of-sight (pockets, bags, closed drawers, cupboards). Our ingest handles **three input modes seamlessly**:
+1. **Silent Visual Sighting (Camera only):** Glasses pan past the kitchen counter and spot `ibuprofen_bottle` left of the kettle → indexed via `voyage-multimodal-3.5` + Gemini tactile anchor.
 2. **Pure Voice / Overheard Memory (Mic only):**
-   - Self-note: *"Keys in my left jacket pocket"* or *"Passport in front backpack zipper."*
-   - Overheard helper/clerk: *"Extra towels are in the bottom bathroom cabinet"* or *"Restroom code is 2580."*
+   - Self-note: *"Keys in my left jacket pocket"* or *"Passport in the top desk drawer."*
+   - Overheard family member or carer: *"I put your new pills in the top cupboard"* or *"Clean towels are in the bottom bathroom cabinet."*
    - Saved into the **exact same `memories` collection** (`source_modality: "voice"`), embedded with `voyage-multimodal-3.5` (which natively embeds pure text into the same 1024-d vector space as images!).
-3. **Fused Multimodal Observation (Camera + Voice together):** User looks at a doorway while saying *"Careful, single step down right before the restroom door"* → stores both the visual doorway vector and spoken hazard warning in one `public` venue memory.
+3. **Fused Multimodal Observation (Camera + Voice together):** User looks at a doorway while saying *"Careful, single step down into the garage"* → stores both the visual doorway vector and spoken hazard warning in one shared household memory.
 
 ---
 
-## Feature 2: Automatic Public ("Waze Indoors") vs. Private Governance
-Every incoming memory passes through a deterministic + LLM **Policy Gate** before hitting MongoDB:
+## Feature 2: Automatic Shared Household vs. Private Governance
+Every incoming memory passes through a deterministic + LLM **Policy Gate** before hitting MongoDB. "Shared" is stored as `visibility: "public"` and means *everyone who belongs to this home*, not the world:
 
 | Detected Observation | Visibility Assigned | Why / Policy Rule |
 | --- | --- | --- |
-| Exit signs, restroom doors, stairs, elevators, wall outlets, counters | `🟢 public` | Permanent venue geometry useful to all blind visitors; stripped of any bystander names/faces. |
-| *"Wet floor by elevator"*, *"Chair blocking left aisle"* | `🟢 public` (`TTL = 2h`) | Shared hazard for other blind visitors, auto-expires in 2 hours. |
-| Wallet, keys, phone, luggage, laptop, cane | `🔒 private` (`owner_id`) | Personal property — locked strictly to owner. |
-| Prescriptions, IDs, mail, credit cards, pocket/bag voice notes | `🔒 private` (`owner_id`) | Sensitive PII/health — quarantined; raw frame thumbnail optionally omitted or blurred. |
-| **Hotel Check-In Mode (`space_mode: "temporary_stay"`)** | **All `🔒 private` + `TTL = checkout`** | Inside a private hotel room, public sharing is auto-disabled and every memory self-destructs at checkout. |
+| Doors, stairs, light switches, wall outlets, appliances, counters, thermostat | `🟢 shared` | Permanent home layout useful to everyone in the household; stripped of any faces or names. |
+| *"Floor is wet, I just mopped"*, *"Laundry basket on the stairs"*, *"Dishwasher door is open"* | `🟢 shared` (`TTL = 2h`) | Short-lived hazard that everyone should know about; auto-expires in 2 hours. |
+| Wallet, keys, phone, bag, laptop, cane | `🔒 private` (`owner_id`) | Personal property — locked strictly to owner, even from other household members. |
+| Prescriptions, IDs, mail, bank cards, pocket/bag voice notes | `🔒 private` (`owner_id`) | Sensitive PII/health — quarantined; raw frame thumbnail optionally omitted or blurred. |
+| **Temporary Stay Mode (`space_mode: "temporary_stay"`)** | **All `🔒 private` + `TTL = end of stay`** | Staying in a guest room, hotel, or respite facility: sharing is auto-disabled and every memory self-destructs when the stay ends. |
+
+The same table applies unchanged in other shared spaces (an office, a care home): only the space and its members differ.
 
 ---
 
-## Feature 3: Voice Memory Controls (*"Forget"*, *"Check In"*, *"What Changed?"*)
+## Feature 3: Voice Memory Controls (*"Forget"*, *"I'm Staying At"*, *"What Changed?"*)
 Users manage governance completely hands-free by voice:
-- **"Check into Room 412 until tomorrow 11 AM"** → Creates a scoped `spaces` entry; every scan in that space inherits `expires_at = tomorrow 11:00 AM` and `visibility = "private"`.
+- **"I'm staying in Mum's guest room until tomorrow 11 AM"** → Creates a scoped `spaces` entry; every scan in that space inherits `expires_at = tomorrow 11:00 AM` and `visibility = "private"`.
 - **"Forget my prescriptions" / "Clear everything from the last 5 minutes"** → Soft/hard deletes matching `owner_id` records in `memories` and appends a `memory_forgotten_by_user` receipt to `audit_events`.
-- **"What moved on this counter?"** → Queries recent `superseded` + `active` transitions in the current space (*"Your mug moved from left of the laptop to behind the monitor 4 minutes ago"*).
+- **"What moved on this counter?"** → Queries recent `superseded` + `active` transitions in the current space (*"The kettle moved from left of the sink to beside the toaster 4 minutes ago"*). Useful after a family member or carer has tidied up.
 
 ---
 
 ## Feature 4: 2-Stage Step-by-Step Navigation Loop (ElevenLabs + Live Video)
 
-When a blind user asks *"Help me find my keys"* or *"Guide me to the water cooler"*, knowing the text answer isn't enough — they need **calm, real-time physical guidance that adapts as they turn and reach**.
+When a blind user asks *"Help me find my keys"* or *"Guide me to the kettle"*, knowing the text answer isn't enough — they need **calm, real-time physical guidance that adapts as they turn and reach**.
 
 ```mermaid
 sequenceDiagram

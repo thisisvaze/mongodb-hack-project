@@ -2,9 +2,9 @@
 
 ## Why MongoDB Atlas Is Doing Real Work Here
 Instead of treating MongoDB as a passive CRUD table, **four native Atlas capabilities** drive the entire agent lifecycle:
-1. **Atlas Vector Search (`voyage-multimodal-3.5`, 1024-d) with Pre-Filtering:** Enforces multi-user `public` vs. `private` isolation *inside* vector retrieval so unauthorized memories can never enter the LLM prompt.
+1. **Atlas Vector Search (`voyage-multimodal-3.5`, 1024-d) with Pre-Filtering:** Enforces multi-user shared (`public`) vs. `private` isolation between household members, carers, and guests *inside* vector retrieval so unauthorized memories can never enter the LLM prompt.
 2. **State Reconciliation (`active` → `superseded`):** Resolves contradictions across **camera sightings** and **voice transcripts** (e.g., camera saw keys on desk at 10:00 → voice says *"keys in hoodie pocket"* at 10:05).
-3. **Native TTL Indexes (`expireAfterSeconds: 0`):** Automatically self-destructs temporary hazards (*wet floor* after 2h) and entire hotel room maps at checkout time.
+3. **Native TTL Indexes (`expireAfterSeconds: 0`):** Automatically self-destructs temporary hazards (*freshly mopped floor* after 2h) and entire temporary-stay maps (guest room, hotel, respite stay) when the stay ends.
 4. **Change Streams (`watch()`) + Strict `$jsonSchema` Validation:** Streams real-time memory births, updates, and blocked-access security alerts to User B's glasses and the Judge Control Room UI while enforcing immutable audit records at the database engine level.
 
 ---
@@ -12,13 +12,13 @@ Instead of treating MongoDB as a passive CRUD table, **four native Atlas capabil
 ## Collections Overview (`hackathon` database on `Cluster0`)
 
 ### 1. `memories` — Unified Multimodal & Voice Spatial Store
-Stores every public venue landmark, temporary hazard, personal object sighting, and spoken/overheard location note.
+Stores every shared household landmark, temporary hazard, personal object sighting, and spoken/overheard location note. `venue_id` identifies the space (a home by default; the same field works for an office, care home, or hotel).
 
 ```json
 {
   "_id": "mem_01J9Z8K4...",
-  "venue_id": "the_quay_3f",
-  "space_mode": "public_venue",
+  "venue_id": "home_vaze",
+  "space_mode": "shared_home",
   "owner_id": "user_vaze",
   "visibility": "private",
   "policy_decision": {
@@ -54,7 +54,7 @@ Stores every public venue landmark, temporary hazard, personal object sighting, 
    db.memories.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 })
    ```
    - Permanent memories keep `expires_at: null` (never deleted).
-   - Temporary hazards set `expires_at = now + 2h`; hotel rooms set `expires_at = checkout_timestamp` — MongoDB deletes them automatically with zero cron jobs.
+   - Temporary hazards set `expires_at = now + 2h`; temporary stays set `expires_at = stay_end_timestamp` — MongoDB deletes them automatically with zero cron jobs.
 2. **Active Lookup Index (Fast Reconciliation):**
    ```javascript
    db.memories.createIndex({ venue_id: 1, owner_id: 1, item_key: 1, status: 1 })
@@ -89,29 +89,42 @@ Created with strict MongoDB `$jsonSchema` validation requiring `actor_id`, `even
 ```json
 {
   "_id": "aud_01J9Z8P9...",
-  "venue_id": "the_quay_3f",
+  "venue_id": "home_vaze",
   "actor_id": "user_guest_b",
   "event_type": "cross_tenant_query_blocked",
   "query_text": "Where did Vaze leave his wallet?",
   "target_item_key": "leather_wallet",
   "verdict": "DENIED",
-  "reason": "Target item exists in venue 'the_quay_3f' under visibility='private' owned by 'user_vaze' (caller='user_guest_b').",
+  "reason": "Target item exists in space 'home_vaze' under visibility='private' owned by 'user_vaze' (caller='user_guest_b').",
   "timestamp": "2026-11-14T15:14:19Z"
 }
 ```
 Other `event_type` values logged live:
-- `memory_promoted_public` — Public fixture/hazard passed PII & face check and entered shared venue map.
+- `memory_promoted_public` — Fixture/hazard passed PII & face check and entered the shared household map.
 - `memory_quarantined_private` — Personal item/meds/pocket speech forced to `private`.
 - `memory_superseded` — Newer camera sighting or spoken update retired an outdated location.
 - `memory_forgotten_by_user` — User issued voice `"Forget ..."` command; records purged.
 
 ---
 
-### 3. `spaces` — Venue & Hotel Session Metadata
+### 3. `spaces` — Home & Temporary Stay Metadata
+A home is a long-lived space with sharing on:
 ```json
 {
-  "_id": "hotel_rm_412",
-  "name": "Marriott Room 412",
+  "_id": "home_vaze",
+  "name": "Vaze's home",
+  "mode": "shared_home",
+  "owner_id": "user_vaze",
+  "members": ["user_vaze", "user_guest_b"],
+  "allow_public_sharing": true,
+  "default_expires_at": null
+}
+```
+A temporary stay (guest room at a relative's house, hotel, respite stay) is private and expires on its own:
+```json
+{
+  "_id": "stay_guest_room",
+  "name": "Guest room at Mum's",
   "mode": "temporary_stay",
   "owner_id": "user_vaze",
   "allow_public_sharing": false,
@@ -126,7 +139,7 @@ Other `event_type` values logged live:
 When `caller_id` asks a question inside `current_venue_id`, we embed the spoken question with `voyage-multimodal-3.5` (`input_type="query"`) and run **two fast checks**:
 
 ### Step A — Governed Retrieval (Only returns what `caller_id` is allowed to know)
-Note: Because Atlas `$vectorSearch` pre-filters support `$or` / `$in`, we run public + caller-owned retrieval cleanly:
+Note: Because Atlas `$vectorSearch` pre-filters support `$or` / `$in`, we run shared (`public`) + caller-owned retrieval cleanly:
 
 ```python
 pipeline = [

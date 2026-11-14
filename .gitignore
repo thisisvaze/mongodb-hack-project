@@ -8,3 +8,5 @@ __pycache__/
 .venv/
 dist/
 build/
+docs/spatial-recall-flowchart.html
+docs/system-diagram.html
