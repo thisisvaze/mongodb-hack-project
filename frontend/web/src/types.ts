@@ -65,12 +65,23 @@ export interface AuditEntry {
   memory_ids: string[];
 }
 
+export interface LiveTurn {
+  user_id: string;
+  ts: string;
+  transcript: string | null;
+  kind: TurnKind;
+  reply_text: string;
+  image_url: string | null;
+}
+
 export interface SpaceState {
   space_id: string;
   users: User[];
   rules: Rules;
   memories: Memory[];
   audit: AuditEntry[];
+  frames?: FrameEvent[];
+  latest_turn?: LiveTurn | null;
 }
 
 export type SendMode = 'text' | 'audio' | 'both';

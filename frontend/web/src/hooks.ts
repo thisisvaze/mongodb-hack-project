@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useState } from 'react';
 import { errorMessage, getState, openEvents, type StreamStatus } from './api';
 import { stopSpeaking } from './speech';
-import type { AuditEntry, FrameEvent, Memory, Rules, SpaceState, User } from './types';
+import type { AuditEntry, FrameEvent, LiveTurn, Memory, Rules, SpaceState, User } from './types';
 
 /** A string kept in localStorage. Falls back to plain state when storage is blocked. */
 export function usePersistentState(key: string, initial: string): [string, (value: string) => void] {
@@ -44,8 +44,10 @@ export interface SpaceData {
   rules: Rules | null;
   memories: Memory[];
   audit: AuditEntry[];
-  /** Latest frame per user id. The state snapshot has none; these come from `frame` events. */
+  /** Latest frame per user id, plus the single most recent frame across the space. */
   frames: Record<string, FrameEvent>;
+  latestFrame: FrameEvent | null;
+  latestTurn: LiveTurn | null;
 }
 
 type Action =
@@ -54,21 +56,33 @@ type Action =
   | { type: 'memory'; memory: Memory }
   | { type: 'audit'; entry: AuditEntry }
   | { type: 'rules'; rules: Rules }
-  | { type: 'frame'; frame: FrameEvent };
+  | { type: 'frame'; frame: FrameEvent }
+  | { type: 'turn'; turn: LiveTurn };
 
 const AUDIT_LIMIT = 200;
 const HIGHLIGHT_MS = 1_500;
 
 const time = (iso: string) => Date.parse(iso) || 0;
-// Array.sort is stable, so entries with the same second keep their arrival order.
 const newestMemories = (list: Memory[]) => [...list].sort((a, b) => time(b.created_at) - time(a.created_at));
 const newestAudit = (list: AuditEntry[]) => [...list].sort((a, b) => time(b.ts) - time(a.ts)).slice(0, AUDIT_LIMIT);
+
+function pickLatestFrame(frames: Record<string, FrameEvent>): FrameEvent | null {
+  let best: FrameEvent | null = null;
+  for (const frame of Object.values(frames)) {
+    if (!best || time(frame.ts) >= time(best.ts)) best = frame;
+  }
+  return best;
+}
 
 function reduce(data: SpaceData, action: Action): SpaceData {
   switch (action.type) {
     case 'reset':
       return EMPTY;
-    case 'snapshot':
+    case 'snapshot': {
+      const nextFrames = { ...data.frames };
+      for (const frame of action.snapshot.frames ?? []) {
+        nextFrames[frame.user_id] = frame;
+      }
       return {
         ...data,
         loaded: true,
@@ -76,7 +90,11 @@ function reduce(data: SpaceData, action: Action): SpaceData {
         rules: action.snapshot.rules,
         memories: newestMemories(action.snapshot.memories),
         audit: newestAudit(action.snapshot.audit),
+        frames: nextFrames,
+        latestFrame: pickLatestFrame(nextFrames),
+        latestTurn: action.snapshot.latest_turn ?? data.latestTurn,
       };
+    }
     case 'memory': {
       const known = data.memories.some((m) => m.id === action.memory.id);
       const next = known
@@ -89,21 +107,41 @@ function reduce(data: SpaceData, action: Action): SpaceData {
       return { ...data, audit: newestAudit([action.entry, ...data.audit]) };
     case 'rules':
       return { ...data, rules: action.rules };
-    case 'frame':
-      return { ...data, frames: { ...data.frames, [action.frame.user_id]: action.frame } };
+    case 'frame': {
+      const frames = { ...data.frames, [action.frame.user_id]: action.frame };
+      return { ...data, frames, latestFrame: action.frame };
+    }
+    case 'turn': {
+      const frames = action.turn.image_url
+        ? { ...data.frames, [action.turn.user_id]: { user_id: action.turn.user_id, ts: action.turn.ts, image_url: action.turn.image_url } }
+        : data.frames;
+      const latestFrame = action.turn.image_url
+        ? { user_id: action.turn.user_id, ts: action.turn.ts, image_url: action.turn.image_url }
+        : data.latestFrame;
+      return { ...data, frames, latestFrame, latestTurn: action.turn };
+    }
   }
 }
 
-const EMPTY: SpaceData = { loaded: false, users: [], rules: null, memories: [], audit: [], frames: {} };
+const EMPTY: SpaceData = {
+  loaded: false,
+  users: [],
+  rules: null,
+  memories: [],
+  audit: [],
+  frames: {},
+  latestFrame: null,
+  latestTurn: null,
+};
 
 export interface Space {
   data: SpaceData;
   status: StreamStatus;
   loadError: string | null;
-  /** Ids of memories and audit entries that arrived or changed a moment ago. */
   fresh: ReadonlySet<string>;
   reload(): void;
   applyRules(rules: Rules): void;
+  recordLocalTurn(turn: LiveTurn): void;
 }
 
 /** Snapshot from GET /api/state, kept live by GET /api/events. */
@@ -117,8 +155,6 @@ export function useSpace(spaceId: string): Space {
   useEffect(() => {
     let cancelled = false;
     let latestLoad = 0;
-    // Events that arrive while a snapshot is in flight are applied at once and
-    // again after the snapshot lands, so a snapshot can never undo a newer event.
     let replay: Action[] | null = null;
     const timers = new Set<number>();
 
@@ -157,7 +193,7 @@ export function useSpace(spaceId: string): Space {
 
     dispatch({ type: 'reset' });
     setLoadError(null);
-    load();
+    void load();
     const close = openEvents(spaceId, {
       onStatus: setStatus,
       onOpen: load,
@@ -165,6 +201,7 @@ export function useSpace(spaceId: string): Space {
       onAudit: ({ entry }) => live({ type: 'audit', entry }, entry.id),
       onRules: ({ rules }) => live({ type: 'rules', rules }),
       onFrame: (frame) => live({ type: 'frame', frame }),
+      onTurn: (turn) => live({ type: 'turn', turn }),
     });
 
     return () => {
@@ -176,6 +213,7 @@ export function useSpace(spaceId: string): Space {
 
   const reload = useCallback(() => setReloadCount((n) => n + 1), []);
   const applyRules = useCallback((rules: Rules) => dispatch({ type: 'rules', rules }), []);
+  const recordLocalTurn = useCallback((turn: LiveTurn) => dispatch({ type: 'turn', turn }), []);
 
-  return { data, status, loadError, fresh, reload, applyRules };
+  return { data, status, loadError, fresh, reload, applyRules, recordLocalTurn };
 }

@@ -1,117 +1,213 @@
-import { useRef, useState, type FormEvent } from 'react';
-import { SPACE_ID, errorMessage, linkWithApi, nowIso, postTurn, type StreamStatus } from '../api';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  SPACE_ID,
+  SPACE_PRESETS,
+  errorMessage,
+  linkWithApi,
+  nowIso,
+  postTurn,
+  syncSpaceParam,
+  type StreamStatus,
+} from '../api';
 import { ApiBaseControl } from '../components/ApiBaseControl';
 import { AuditLog } from '../components/AuditLog';
-import { FramesPanel } from '../components/FramesPanel';
 import { MemoryList } from '../components/MemoryList';
-import { ReplyPanel, type TurnResult } from '../components/ReplyPanel';
 import { RulesEditor } from '../components/RulesEditor';
 import { UserPicker } from '../components/UserPicker';
+import { KIND_LABEL, formatTime, labelOf } from '../format';
 import { useMute, usePersistentState, useSpace } from '../hooks';
+import { cameraProblem, grabFrame } from '../media';
 import { speakReply, unlockSpeech } from '../speech';
 
 const STREAM_LABEL: Record<StreamStatus, string> = {
   connecting: 'Connecting',
   live: 'Live',
-  retrying: 'Disconnected, retrying',
+  retrying: 'Reconnecting',
 };
 
 export function Dashboard() {
-  const { data, status, loadError, fresh, reload, applyRules } = useSpace(SPACE_ID);
-  const [actingId, setActingId] = usePersistentState('safespace.actingUser', '');
+  const [spaceId, setSpaceId] = useState(SPACE_ID);
+  const { data, status, loadError, fresh, reload, applyRules, recordLocalTurn } = useSpace(spaceId);
+  const [actingId, setActingId] = usePersistentState(`safespace.user.${spaceId}`, '');
   const [muted, setMuted] = useMute();
+  const [showRules, setShowRules] = useState(false);
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
-  const [result, setResult] = useState<TurnResult | null>(null);
+  const [turnError, setTurnError] = useState<string | null>(null);
+  const [camLive, setCamLive] = useState(false);
+  const [camError, setCamError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
 
+  const stopCam = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCamLive(false);
+  }, []);
+
+  const toggleCam = async () => {
+    if (camLive) {
+      stopCam();
+      return;
+    }
+    setCamError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 960 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCamLive(true);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => undefined);
+      }
+    } catch (err) {
+      setCamError(cameraProblem(err));
+    }
+  };
+
+  useEffect(() => stopCam, [stopCam]);
+
+  const spaces = SPACE_PRESETS.some((preset) => preset.id === spaceId)
+    ? SPACE_PRESETS
+    : [...SPACE_PRESETS, { id: spaceId, label: spaceId, context: 'Custom indoor space', prompts: {} }];
+  const activePreset = spaces.find((preset) => preset.id === spaceId) ?? spaces[0];
+
   const actingUser = data.users.find((user) => user.id === actingId) ?? data.users[0] ?? null;
   const activeCount = data.memories.filter((memory) => memory.status === 'active').length;
-  // Shown in place of the lists until the first snapshot arrives.
-  const waiting = data.loaded ? null : loadError ? 'Not loaded.' : 'Loading…';
+  const waiting = data.loaded ? null : loadError ? 'Offline' : 'Loading…';
+  const quickPrompts = actingUser ? (activePreset.prompts[actingUser.role] ?? []) : [];
+  const nameOf = (id: string) => data.users.find((user) => user.id === id)?.name ?? id;
 
-  const send = async (event: FormEvent) => {
-    event.preventDefault();
-    const said = text.trim();
+  const selectSpace = (nextSpace: string) => {
+    if (nextSpace === spaceId) return;
+    syncSpaceParam(nextSpace);
+    setSpaceId(nextSpace);
+    setTurnError(null);
+    setText('');
+  };
+
+  const runTurn = async (rawText: string) => {
+    const said = rawText.trim();
     if (!said || !actingUser || pending) return;
     if (!muted) unlockSpeech();
     setPending(true);
+    setTurnError(null);
     setText('');
-    const turn = { userName: actingUser.name, text: said, sentAudio: false, sentImage: false };
+    const sentAt = nowIso();
+    const imageB64 = camLive && videoRef.current ? grabFrame(videoRef.current) : null;
     try {
       const response = await postTurn({
-        space_id: SPACE_ID,
+        space_id: spaceId,
         user_id: actingUser.id,
-        ts: nowIso(),
+        ts: sentAt,
         text: said,
         audio: null,
-        image_b64: null,
+        image_b64: imageB64,
         image_url: null,
       });
-      setResult({ ...turn, response });
+      recordLocalTurn({
+        user_id: actingUser.id,
+        ts: sentAt,
+        transcript: response.heard_text ?? said,
+        kind: response.kind,
+        reply_text: response.reply_text,
+        image_url: imageB64 ? `data:image/jpeg;base64,${imageB64}` : null,
+      });
       if (!mutedRef.current) speakReply(response.reply_text, response.audio_url);
     } catch (err) {
-      setResult({ ...turn, error: errorMessage(err) });
+      setTurnError(errorMessage(err));
       setText(said);
     } finally {
       setPending(false);
     }
   };
 
+  const send = (event: FormEvent) => {
+    event.preventDefault();
+    void runTurn(text);
+  };
+
+  const liveTurn = data.latestTurn;
+  const liveFrame = data.latestFrame;
+  const turnTone = turnError || liveTurn?.kind === 'denied' ? 'bad' : liveTurn ? 'good' : 'idle';
+
   return (
     <div className="dash">
       <header className="topbar">
-        <h1>SafeSpace</h1>
-        <dl className="topbar-facts">
-          <div>
-            <dt>Space</dt>
-            <dd>{SPACE_ID}</dd>
-          </div>
-          <div>
-            <dt>Event stream</dt>
-            <dd>
-              <span className={`tag stream-${status}`} role="status">
-                {STREAM_LABEL[status]}
-              </span>
-            </dd>
-          </div>
-        </dl>
+        <div className="brand">
+          <h1><img className="brand-logo" src="/safespace-logo.svg" alt="SafeSpace" /></h1>
+          <span className="brand-sub">Blind indoor memory</span>
+        </div>
+
+        <nav className="space-tabs" aria-label="Indoor spaces">
+          {spaces.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className={`space-tab${preset.id === spaceId ? ' is-active' : ''}`}
+              aria-pressed={preset.id === spaceId}
+              onClick={() => selectSpace(preset.id)}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </nav>
+
         <div className="topbar-tools">
-          <ApiBaseControl />
-          <a className="plain-link" href={linkWithApi('/capture')}>
-            Capture page
+          <span className={`status-dot stream-${status}`} role="status">
+            {STREAM_LABEL[status]}
+          </span>
+          <button
+            type="button"
+            className={`button small quiet${showRules ? ' is-open' : ''}`}
+            aria-expanded={showRules}
+            onClick={() => setShowRules((open) => !open)}
+          >
+            Access rules
+          </button>
+          <a className="button small quiet link-button" href={linkWithApi('/capture', spaceId)}>
+            Phone / cam
           </a>
+          <ApiBaseControl />
         </div>
       </header>
 
       {loadError && (
         <p className="banner" role="alert">
           <span className="tag kind-error">Error</span>
-          <span>Could not load the home's state. {loadError}</span>
-          <button type="button" className="button small" onClick={reload}>
+          <span>{loadError}</span>
+          {spaceId !== 'home' && (
+            <button type="button" className="button small" onClick={() => selectSpace('home')}>
+              Switch to Shared Home
+            </button>
+          )}
+          <button type="button" className="button small quiet" onClick={reload}>
             Retry
           </button>
         </p>
       )}
 
-      <section className="turn" aria-labelledby="turn-heading">
-        <h2 id="turn-heading" className="visually-hidden">
-          Say something as a user
-        </h2>
-
-        <UserPicker
-          legend="Acting as"
-          name="acting-user"
-          users={data.users}
-          selectedId={actingUser?.id ?? null}
-          onSelect={setActingId}
-          emptyText={waiting ?? 'No users.'}
-        />
+      <section className="turn-bar" aria-label="Live input and controls">
+        <div className="turn-meta">
+          <UserPicker
+            legend="Caller"
+            name="acting-user"
+            users={data.users}
+            selectedId={actingUser?.id ?? null}
+            onSelect={setActingId}
+            emptyText={waiting ?? 'No users'}
+          />
+          <p className="space-context">{activePreset.context}</p>
+        </div>
 
         <form className="ask" onSubmit={send}>
-          <label htmlFor="ask-input" className="ask-label">
-            Note or question{actingUser ? ` from ${actingUser.name}` : ''}
+          <label htmlFor="ask-input" className="visually-hidden">
+            Note or question{actingUser ? ` as ${actingUser.name}` : ''}
           </label>
           <div className="ask-row">
             <input
@@ -119,35 +215,138 @@ export function Dashboard() {
               className="input"
               type="text"
               autoComplete="off"
-              placeholder="I'm putting my keys in my left jacket pocket"
+              placeholder={
+                actingUser
+                  ? `Speak or type as ${actingUser.name} in ${activePreset.label}…`
+                  : 'Speak or type a note or question…'
+              }
               value={text}
               onChange={(event) => setText(event.target.value)}
             />
             <button type="submit" className="button" disabled={!actingUser || pending || !text.trim()}>
               {pending ? 'Sending…' : 'Send'}
             </button>
-            <label className="toggle">
-              <input type="checkbox" checked={muted} onChange={(event) => setMuted(event.target.checked)} />
-              <span>Mute voice</span>
-            </label>
+            <button
+              type="button"
+              className="button quiet voice-toggle"
+              aria-pressed={!muted}
+              onClick={() => setMuted(!muted)}
+            >
+              {muted ? 'Muted' : 'Voice on'}
+            </button>
           </div>
+
+          {quickPrompts.length > 0 && (
+            <div className="prompt-chips" aria-label="Quick demo prompts">
+              {quickPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  className="prompt-chip"
+                  disabled={pending}
+                  onClick={() => void runTurn(prompt)}
+                >
+                  “{prompt}”
+                </button>
+              ))}
+            </div>
+          )}
         </form>
 
-        <ReplyPanel result={result} pending={pending} hint="The reply appears here and is read aloud." />
+        <div className="live-feed" aria-live="polite">
+          <figure className="live-photo">
+            <video
+              ref={videoRef}
+              className={`live-video${camLive ? ' is-live' : ''}`}
+              playsInline
+              muted
+              autoPlay
+              aria-label="Live webcam preview"
+            />
+            {camLive ? (
+              <figcaption>
+                <span>Live cam</span>
+                <button type="button" className="mini-link" onClick={() => void toggleCam()}>
+                  Stop
+                </button>
+              </figcaption>
+            ) : liveFrame ? (
+              <>
+                <img src={liveFrame.image_url} alt={`Latest frame from ${nameOf(liveFrame.user_id)}`} />
+                <figcaption>
+                  <span>
+                    {nameOf(liveFrame.user_id)} · <time dateTime={liveFrame.ts}>{formatTime(liveFrame.ts)}</time>
+                  </span>
+                  <button type="button" className="mini-link" onClick={() => void toggleCam()}>
+                    Live cam
+                  </button>
+                </figcaption>
+              </>
+            ) : (
+              <div className="live-photo-empty">
+                <span className="live-label">Latest image</span>
+                <span>{camError ?? 'No glasses photo yet'}</span>
+                <button type="button" className="button small quiet" onClick={() => void toggleCam()}>
+                  Use laptop cam
+                </button>
+              </div>
+            )}
+          </figure>
+
+          <div className={`live-transcript tone-${turnTone}`}>
+            <div className="live-head">
+              <span className="live-label">Latest transcript &amp; reply</span>
+              {liveTurn && (
+                <span className="live-meta">
+                  {nameOf(liveTurn.user_id)} · <time dateTime={liveTurn.ts}>{formatTime(liveTurn.ts)}</time>
+                </span>
+              )}
+            </div>
+
+            {turnError ? (
+              <p className="reply-line">
+                <span className="tag kind-error">Error</span>
+                <span className="reply-text">{turnError}</span>
+              </p>
+            ) : liveTurn ? (
+              <>
+                <p className="transcript-quote">
+                  {liveTurn.transcript ? `“${liveTurn.transcript}”` : '(raw audio clip received)'}
+                </p>
+                <p className="reply-line">
+                  <span className={`tag kind-${liveTurn.kind}`}>{labelOf(KIND_LABEL, liveTurn.kind)}</span>
+                  <span className="reply-text">{liveTurn.reply_text}</span>
+                </p>
+              </>
+            ) : (
+              <p className="empty-note">Waiting for speech from Mentra glasses, phone capture, or input above.</p>
+            )}
+          </div>
+        </div>
       </section>
 
-      <main className="columns">
+      {showRules && (
+        <section className="drawer" aria-labelledby="rules-heading">
+          <div className="panel-head">
+            <h2 id="rules-heading">Access rules · {activePreset.label}</h2>
+            <button type="button" className="button small quiet" onClick={() => setShowRules(false)}>
+              Close
+            </button>
+          </div>
+          {data.rules ? (
+            <RulesEditor spaceId={spaceId} rules={data.rules} users={data.users} onSaved={applyRules} />
+          ) : (
+            <p className="empty-note">{waiting ?? 'No rules loaded.'}</p>
+          )}
+        </section>
+      )}
+
+      <main className="workspace">
         <section className="panel" aria-labelledby="memories-heading">
           <div className="panel-head">
-            <h2 id="memories-heading">Memories</h2>
-            <p className="panel-count">
-              {activeCount} active of {data.memories.length}
-            </p>
+            <h2 id="memories-heading">Space memories</h2>
+            <span className="panel-count">{activeCount} active</span>
           </div>
-          <p className="fine-print">
-            Admin view: every memory, newest first. Visible or Hidden is worked out in this page from the rules. The
-            backend enforces it.
-          </p>
           <div className="panel-scroll" tabIndex={0} role="group" aria-label="Memory list">
             {waiting ? (
               <p className="empty-note">{waiting}</p>
@@ -163,32 +362,10 @@ export function Dashboard() {
           </div>
         </section>
 
-        <div className="panel-stack">
-          <section className="panel" aria-labelledby="rules-heading">
-            <div className="panel-head">
-              <h2 id="rules-heading">Rules</h2>
-              <p className="panel-count">Who can see which group</p>
-            </div>
-            {data.rules ? (
-              <RulesEditor rules={data.rules} users={data.users} onSaved={applyRules} />
-            ) : (
-              <p className="empty-note">{waiting ?? 'No rules.'}</p>
-            )}
-          </section>
-
-          <section className="panel" aria-labelledby="frames-heading">
-            <div className="panel-head">
-              <h2 id="frames-heading">Cameras</h2>
-              <p className="panel-count">Latest frame per user</p>
-            </div>
-            {waiting ? <p className="empty-note">{waiting}</p> : <FramesPanel users={data.users} frames={data.frames} />}
-          </section>
-        </div>
-
         <section className="panel" aria-labelledby="audit-heading">
           <div className="panel-head">
-            <h2 id="audit-heading">Audit log</h2>
-            <p className="panel-count">{data.audit.length} entries, newest first</p>
+            <h2 id="audit-heading">Governance log</h2>
+            <span className="panel-count">{data.audit.length}</span>
           </div>
           <div className="panel-scroll" tabIndex={0} role="group" aria-label="Audit entries">
             {waiting ? (

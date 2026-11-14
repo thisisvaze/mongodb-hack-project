@@ -105,7 +105,9 @@ not filtered by role.
   "users": [ /* User */ ],
   "rules": { /* Rules */ },
   "memories": [ /* Memory, newest first */ ],
-  "audit": [ /* AuditEntry, newest first, last 200 */ ]
+  "audit": [ /* AuditEntry, newest first, last 200 */ ],
+  "frames": [ /* optional: { user_id, ts, image_url } */ ],
+  "latest_turn": { /* optional: { user_id, ts, transcript, kind, reply_text, image_url } or null */ }
 }
 ```
 
@@ -210,6 +212,7 @@ Server-sent events (`text/event-stream`). Send a comment line (`: ping`) every 1
 | `audit` | `{ "entry": AuditEntry }` |
 | `rules` | `{ "rules": Rules }` |
 | `frame` | `{ "user_id": "u_resident", "ts": "...", "image_url": "https://..." }` |
+| `turn` | *(optional)* `{ "user_id": "u_resident", "ts": "...", "transcript": "...", "kind": "saved", "reply_text": "...", "image_url": null }` |
 
 `updated` covers a memory being superseded, forgotten or expired.
 

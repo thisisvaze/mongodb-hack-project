@@ -4,6 +4,7 @@ import type {
   AuditEvent,
   FrameEvent,
   FrameRequest,
+  LiveTurn,
   MemoryEvent,
   Rules,
   RulesEvent,
@@ -248,6 +249,7 @@ export interface StreamHandlers {
   onAudit(event: AuditEvent): void;
   onRules(event: RulesEvent): void;
   onFrame(event: FrameEvent): void;
+  onTurn(event: LiveTurn): void;
 }
 
 /** Opens the server-sent event stream. Returns a function that closes it. */
@@ -286,6 +288,7 @@ export function openEvents(spaceId: string, handlers: StreamHandlers): () => voi
     listen<AuditEvent>('audit', handlers.onAudit);
     listen<RulesEvent>('rules', handlers.onRules);
     listen<FrameEvent>('frame', handlers.onFrame);
+    listen<LiveTurn>('turn', handlers.onTurn);
   };
 
   handlers.onStatus('connecting');

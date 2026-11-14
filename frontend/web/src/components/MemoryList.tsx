@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { SOURCE_LABEL, STATUS_LABEL, formatDateTime, formatTime, labelOf } from '../format';
 import type { Memory, Rules, User } from '../types';
-import { canSee, visibilityReason } from '../visibility';
+import { canSee, formatGroup } from '../visibility';
 
 interface Props {
   memories: Memory[];
@@ -11,26 +12,66 @@ interface Props {
 }
 
 export function MemoryList({ memories, users, rules, actingUser, fresh }: Props) {
-  if (memories.length === 0) return <p className="empty-note">No memories yet.</p>;
+  const [showHistory, setShowHistory] = useState(false);
+
+  if (memories.length === 0) return <p className="empty-note">No memories stored in this space yet.</p>;
 
   const byId = new Map(memories.map((memory) => [memory.id, memory]));
   const nameOf = (id: string) => users.find((user) => user.id === id)?.name ?? id;
 
+  // Keep freshly updated items visible inline so live updates/wipes show immediately.
+  const main = memories.filter((memory) => memory.status === 'active' || fresh.has(memory.id));
+  const archived = memories.filter((memory) => memory.status !== 'active' && !fresh.has(memory.id));
+
   return (
-    <ul className="cards">
-      {memories.map((memory) => (
-        <li key={memory.id}>
-          <MemoryCard
-            memory={memory}
-            ownerName={nameOf(memory.owner_id)}
-            replacement={memory.superseded_by ? byId.get(memory.superseded_by) : undefined}
-            rules={rules}
-            actingUser={actingUser}
-            fresh={fresh.has(memory.id)}
-          />
-        </li>
-      ))}
-    </ul>
+    <div className="memory-stack">
+      {main.length === 0 && <p className="empty-note">No active memories in this space.</p>}
+      {main.length > 0 && (
+        <ul className="cards">
+          {main.map((memory) => (
+            <li key={memory.id}>
+              <MemoryCard
+                memory={memory}
+                ownerName={nameOf(memory.owner_id)}
+                replacement={memory.superseded_by ? byId.get(memory.superseded_by) : undefined}
+                rules={rules}
+                actingUser={actingUser}
+                fresh={fresh.has(memory.id)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {archived.length > 0 && (
+        <div className="history-block">
+          <button
+            type="button"
+            className="history-toggle"
+            onClick={() => setShowHistory((open) => !open)}
+            aria-expanded={showHistory}
+          >
+            {showHistory ? 'Hide' : 'Show'} {archived.length} retired / wiped
+          </button>
+          {showHistory && (
+            <ul className="cards archived-cards">
+              {archived.map((memory) => (
+                <li key={memory.id}>
+                  <MemoryCard
+                    memory={memory}
+                    ownerName={nameOf(memory.owner_id)}
+                    replacement={memory.superseded_by ? byId.get(memory.superseded_by) : undefined}
+                    rules={rules}
+                    actingUser={actingUser}
+                    fresh={false}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -46,6 +87,8 @@ interface CardProps {
 function MemoryCard({ memory, ownerName, replacement, rules, actingUser, fresh }: CardProps) {
   const inactive = memory.status !== 'active';
   const visible = actingUser && rules ? canSee(actingUser, memory, rules) : null;
+  const isOwner = actingUser?.id === memory.owner_id;
+  const isPrivateGroup = memory.group === rules?.default_group || memory.group.endsWith('_only');
 
   return (
     <article
@@ -54,8 +97,22 @@ function MemoryCard({ memory, ownerName, replacement, rules, actingUser, fresh }
       aria-labelledby={`memory-${memory.id}-item`}
     >
       <header className="card-head">
-        <span className={`tag status-tag status-${memory.status}`}>{labelOf(STATUS_LABEL, memory.status)}</span>
-        <span className="card-id">{memory.id}</span>
+        {inactive ? (
+          <span className={`tag status-tag status-${memory.status}`}>{labelOf(STATUS_LABEL, memory.status)}</span>
+        ) : visible === false ? (
+          <span className="tag see-no">Locked</span>
+        ) : isPrivateGroup ? (
+          <span className="tag see-private">{isOwner ? 'Private · Yours' : 'Private'}</span>
+        ) : (
+          <span className="tag see-yes">Shared · {formatGroup(memory.group)}</span>
+        )}
+        <span className="meta-pill">{labelOf(SOURCE_LABEL, memory.source)}</span>
+        {!isOwner && <span className="meta-note">by {ownerName}</span>}
+        {memory.expires_at && !inactive && (
+          <span className="meta-note">
+            wipes <time dateTime={memory.expires_at}>{formatDateTime(memory.expires_at)}</time>
+          </span>
+        )}
         <time className="card-time" dateTime={memory.created_at}>
           {formatTime(memory.created_at)}
         </time>
@@ -74,61 +131,10 @@ function MemoryCard({ memory, ownerName, replacement, rules, actingUser, fresh }
       {inactive && (
         <p className="memory-fate">
           {memory.status === 'superseded' && (
-            <>
-              Superseded.{' '}
-              {replacement ? (
-                <>
-                  Replaced by <a href={`#memory-${replacement.id}`}>{replacement.id}</a>: “{replacement.summary}”
-                </>
-              ) : memory.superseded_by ? (
-                <>Replaced by {memory.superseded_by}.</>
-              ) : (
-                <>The replacement is not known.</>
-              )}
-            </>
+            <>{replacement ? `Moved → ${replacement.summary}` : 'Replaced by a newer sighting.'}</>
           )}
-          {memory.status === 'forgotten' && <>Forgotten at {formatTime(memory.updated_at)}. No longer used for answers.</>}
-          {memory.status === 'expired' && <>Expired at {formatTime(memory.updated_at)}. No longer used for answers.</>}
-        </p>
-      )}
-
-      <dl className="facts">
-        <div className="wide">
-          <dt>Location</dt>
-          <dd>{memory.location || 'Not given'}</dd>
-        </div>
-        <div>
-          <dt>Owner</dt>
-          <dd>{ownerName}</dd>
-        </div>
-        <div>
-          <dt>Topic</dt>
-          <dd>{memory.topic}</dd>
-        </div>
-        <div>
-          <dt>Group</dt>
-          <dd>{memory.group}</dd>
-        </div>
-        <div>
-          <dt>Source</dt>
-          <dd>{labelOf(SOURCE_LABEL, memory.source)}</dd>
-        </div>
-        {memory.expires_at && (
-          <div>
-            <dt>{memory.status === 'expired' ? 'Expired' : 'Expires'}</dt>
-            <dd>
-              <time dateTime={memory.expires_at}>{formatDateTime(memory.expires_at)}</time>
-            </dd>
-          </div>
-        )}
-      </dl>
-
-      {actingUser && rules && visible !== null && (
-        <p className="visibility">
-          <span className={`tag ${visible ? 'see-yes' : 'see-no'}`}>
-            {visible ? `Visible to ${actingUser.name}` : `Hidden from ${actingUser.name}`}
-          </span>
-          <span className="visibility-reason">{visibilityReason(actingUser, memory, rules)}</span>
+          {memory.status === 'forgotten' && <>Wiped at {formatTime(memory.updated_at)}.</>}
+          {memory.status === 'expired' && <>Auto-expired at {formatTime(memory.updated_at)}.</>}
         </p>
       )}
     </article>

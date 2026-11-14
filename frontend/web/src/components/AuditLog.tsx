@@ -8,12 +8,9 @@ interface Props {
 }
 
 export function AuditLog({ entries, users, fresh }: Props) {
-  if (entries.length === 0) return <p className="empty-note">Nothing logged yet.</p>;
+  if (entries.length === 0) return <p className="empty-note">No events yet.</p>;
 
-  const actor = (id: string) => {
-    const user = users.find((u) => u.id === id);
-    return user ? `${user.name} (${user.role})` : id;
-  };
+  const actor = (id: string) => users.find((u) => u.id === id)?.name ?? id;
 
   return (
     <ol className="audit">
@@ -22,24 +19,12 @@ export function AuditLog({ entries, users, fresh }: Props) {
           <p className="audit-head">
             <span className={`tag verdict-tag verdict-${entry.verdict}`}>{labelOf(VERDICT_LABEL, entry.verdict)}</span>
             <span className="audit-action">{labelOf(ACTION_LABEL, entry.action)}</span>
+            <span className="audit-actor">{actor(entry.actor_id)}</span>
             <time className="card-time" dateTime={entry.ts}>
               {formatTime(entry.ts)}
             </time>
           </p>
-          <p className="audit-detail">
-            <span className="audit-actor">{actor(entry.actor_id)}.</span> {entry.detail}
-          </p>
-          {entry.memory_ids.length > 0 && (
-            <p className="audit-memories">
-              {entry.memory_ids.length === 1 ? 'Memory' : 'Memories'}:{' '}
-              {entry.memory_ids.map((id, index) => (
-                <span key={id}>
-                  {index > 0 && ', '}
-                  <a href={`#memory-${id}`}>{id}</a>
-                </span>
-              ))}
-            </p>
-          )}
+          <p className="audit-detail">{entry.detail}</p>
         </li>
       ))}
     </ol>

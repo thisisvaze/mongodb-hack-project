@@ -19,13 +19,14 @@ export function ApiBaseControl() {
 
   if (!editing) {
     return (
-      <div className="api-base">
-        <span className="api-base-label">Backend</span>
-        <code className="api-base-url">{API_BASE}</code>
-        <button type="button" className="button small quiet" onClick={() => setEditing(true)}>
-          Change
-        </button>
-      </div>
+      <button
+        type="button"
+        className="button small quiet"
+        title={`Backend: ${API_BASE}`}
+        onClick={() => setEditing(true)}
+      >
+        Server
+      </button>
     );
   }
 

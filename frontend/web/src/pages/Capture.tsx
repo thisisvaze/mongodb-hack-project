@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { SPACE_ID, errorMessage, getState, linkWithApi, nowIso, postFrame, postTurn } from '../api';
+import {
+  SPACE_ID,
+  SPACE_PRESETS,
+  errorMessage,
+  getState,
+  linkWithApi,
+  nowIso,
+  postFrame,
+  postTurn,
+  syncSpaceParam,
+} from '../api';
 import { ApiBaseControl } from '../components/ApiBaseControl';
 import { ReplyPanel, type TurnResult } from '../components/ReplyPanel';
 import { UserPicker } from '../components/UserPicker';
@@ -43,6 +53,7 @@ function validSendMode(raw: string): SendMode {
 }
 
 export function Capture() {
+  const [spaceId, setSpaceId] = useState(SPACE_ID);
   const [users, setUsers] = useState<User[]>([]);
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [userId, setUserId] = usePersistentState('safespace.captureUser', '');
@@ -71,19 +82,19 @@ export function Capture() {
   const user = users.find((candidate) => candidate.id === userId) ?? users[0] ?? null;
   const frameUserId = user?.id;
 
-  const latest = useRef({ user, muted });
-  latest.current = { user, muted };
+  const latest = useRef({ user, muted, spaceId });
+  latest.current = { user, muted, spaceId };
 
   const loadUsers = useCallback(async () => {
     setLoad({ state: 'loading' });
     try {
-      const state = await getState(SPACE_ID);
+      const state = await getState(spaceId);
       setUsers(state.users);
       setLoad({ state: 'ready' });
     } catch (err) {
       setLoad({ state: 'failed', message: errorMessage(err) });
     }
-  }, []);
+  }, [spaceId]);
 
   useEffect(() => {
     void loadUsers();
@@ -159,7 +170,7 @@ export function Capture() {
     };
     try {
       const response = await postTurn({
-        space_id: SPACE_ID,
+        space_id: latest.current.spaceId,
         user_id: speaker.id,
         ts: nowIso(),
         text: clean,
@@ -349,7 +360,7 @@ export function Capture() {
       if (!image) return;
       busy = true;
       try {
-        const sent = await postFrame({ space_id: SPACE_ID, user_id: frameUserId, ts: nowIso(), image_b64: image, image_url: null });
+        const sent = await postFrame({ space_id: spaceId, user_id: frameUserId, ts: nowIso(), image_b64: image, image_url: null });
         // Live guidance: the backend recognised this view from an earlier walk-through.
         if (sent.say && !latest.current.muted) speakAside(sent.say);
         count += 1;
@@ -367,7 +378,7 @@ export function Capture() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [autoFrames, camera.kind, frameUserId]);
+  }, [autoFrames, camera.kind, frameUserId, spaceId]);
 
   const cameraBusy = camera.kind === 'live' || camera.kind === 'starting';
   const canTalk = sendMode === 'text' ? Boolean(RecognitionClass) : true;
@@ -379,16 +390,36 @@ export function Capture() {
       ? 'Sending…'
       : 'Talk';
 
+  const switchSpace = (nextSpace: string) => {
+    syncSpaceParam(nextSpace);
+    setSpaceId(nextSpace);
+    setResult(null);
+  };
+
   return (
     <div className="capture">
       <header className="capture-top">
         <h1>
-          SafeSpace <span className="capture-sub">Capture</span>
+          <img className="brand-logo" src="/safespace-logo.svg" alt="SafeSpace" /> <span className="capture-sub">Capture</span>
         </h1>
-        <a className="plain-link" href={linkWithApi('/')}>
+        <a className="button small quiet link-button" href={linkWithApi('/', spaceId)}>
           Dashboard
         </a>
       </header>
+
+      <nav className="space-tabs" aria-label="Indoor spaces">
+        {SPACE_PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            type="button"
+            className={`space-tab${preset.id === spaceId ? ' is-active' : ''}`}
+            aria-pressed={preset.id === spaceId}
+            onClick={() => switchSpace(preset.id)}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </nav>
 
       {load.state === 'failed' && (
         <p className="banner" role="alert">

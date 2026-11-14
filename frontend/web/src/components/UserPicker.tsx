@@ -17,25 +17,20 @@ export function UserPicker({ legend, name, users, selectedId, onSelect, emptyTex
       <legend>{legend}</legend>
       {users.length === 0 && <p className="empty-note">{emptyText}</p>}
       <div className="choices">
-        {users.map((user) => {
-          const roleLabel = user.role.replace(/_/g, ' ');
-          const showRole = user.name.toLowerCase() !== roleLabel.toLowerCase();
-          return (
-            <label key={user.id} className="choice">
-              <input
-                type="radio"
-                name={name}
-                value={user.id}
-                checked={selectedId === user.id}
-                onChange={() => onSelect(user.id)}
-              />
-              <span className="choice-face">
-                <span className="choice-name">{user.name}</span>
-                {showRole && <span className="choice-role">{roleLabel}</span>}
-              </span>
-            </label>
-          );
-        })}
+        {users.map((user) => (
+          <label key={user.id} className="choice">
+            <input
+              type="radio"
+              name={name}
+              value={user.id}
+              checked={selectedId === user.id}
+              onChange={() => onSelect(user.id)}
+            />
+            <span className="choice-face">
+              <span className="choice-name">{user.name}</span>
+            </span>
+          </label>
+        ))}
       </div>
     </fieldset>
   );

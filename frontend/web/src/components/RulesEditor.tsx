@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { SPACE_ID, errorMessage, putRules } from '../api';
 import { formatTime } from '../format';
 import type { Rules, User } from '../types';
+import { formatGroup } from '../visibility';
 
 interface Props {
+  spaceId?: string;
   rules: Rules;
   users: User[];
   onSaved(rules: Rules): void;
@@ -50,7 +52,7 @@ function topicsIn(rules: Rules, group: string): string {
   return names.length ? names.join(', ') : 'no topics';
 }
 
-export function RulesEditor({ rules, users, onSaved }: Props) {
+export function RulesEditor({ spaceId = SPACE_ID, rules, users, onSaved }: Props) {
   const serverKey = rulesKey(rules);
   const [syncedKey, setSyncedKey] = useState(serverKey);
   const [draft, setDraft] = useState(rules);
@@ -76,12 +78,8 @@ export function RulesEditor({ rules, users, onSaved }: Props) {
   const roles = orderedRoles(draft, users);
   const groups = orderedGroups(rules, draft);
   const dirty = rulesKey(draft) !== serverKey;
-  const status: Message =
-    message?.tone === 'bad'
-      ? message
-      : dirty
-        ? { tone: 'quiet', text: 'Unsaved changes.' }
-        : (message ?? { tone: 'quiet', text: 'No unsaved changes.' });
+  const status: Message | null =
+    message?.tone === 'bad' ? message : dirty ? { tone: 'quiet', text: 'Unsaved changes' } : message;
 
   const toggle = (role: string, group: string, on: boolean) => {
     const current = draft.roles[role]?.can_see ?? [];
@@ -97,9 +95,9 @@ export function RulesEditor({ rules, users, onSaved }: Props) {
     setSaving(true);
     setMessage(null);
     try {
-      const response = await putRules(SPACE_ID, draft);
+      const response = await putRules(spaceId, draft);
       onSaved(response.rules);
-      setMessage({ tone: 'good', text: `Saved at ${formatTime(new Date().toISOString())}.` });
+      setMessage({ tone: 'good', text: `Saved ${formatTime(new Date().toISOString())}` });
     } catch (err) {
       setMessage({ tone: 'bad', text: `Not saved. ${errorMessage(err)}` });
     } finally {
@@ -113,10 +111,10 @@ export function RulesEditor({ rules, users, onSaved }: Props) {
         <caption className="visually-hidden">Which role can see which group of memories</caption>
         <thead>
           <tr>
-            <th scope="col">Group</th>
+            <th scope="col">Memory layer</th>
             {roles.map((role) => (
               <th scope="col" key={role}>
-                {role}
+                {role.replace(/_/g, ' ')}
               </th>
             ))}
           </tr>
@@ -125,16 +123,15 @@ export function RulesEditor({ rules, users, onSaved }: Props) {
           {groups.map((group, row) => (
             <tr key={group}>
               <th scope="row">
-                <span className="matrix-group">{group}</span>
+                <span className="matrix-group">{formatGroup(group)}</span>
                 <span className="matrix-topics">{topicsIn(draft, group)}</span>
               </th>
               {roles.map((role) => {
                 const sees = draft.roles[role]?.can_see ?? [];
                 if (sees.includes('*')) {
-                  // One cell for the whole column: a "*" role is not edited group by group.
                   return row === 0 ? (
                     <td key={role} rowSpan={groups.length} className="matrix-all">
-                      Everything
+                      All
                     </td>
                   ) : null;
                 }
@@ -154,7 +151,7 @@ export function RulesEditor({ rules, users, onSaved }: Props) {
                         {role} can see {group}
                       </span>
                       <span className={`check-word ${checked ? 'on' : 'off'}`} aria-hidden="true">
-                        {checked ? 'Sees' : 'Hidden'}
+                        {checked ? 'Allow' : 'Block'}
                       </span>
                     </label>
                   </td>
@@ -166,17 +163,20 @@ export function RulesEditor({ rules, users, onSaved }: Props) {
       </table>
 
       <div className="rules-actions">
-        <button type="button" className="button" onClick={save} disabled={!dirty || saving}>
+        <button type="button" className="button small" onClick={save} disabled={!dirty || saving}>
           {saving ? 'Saving…' : 'Save rules'}
         </button>
-        <button type="button" className="button quiet" onClick={() => setDraft(rules)} disabled={!dirty || saving}>
-          Discard
-        </button>
-        <p className={`rules-message ${status.tone}`} role="status">
-          {status.text}
-        </p>
+        {dirty && (
+          <button type="button" className="button small quiet" onClick={() => setDraft(rules)} disabled={saving}>
+            Reset
+          </button>
+        )}
+        {status && (
+          <p className={`rules-message ${status.tone}`} role="status">
+            {status.text}
+          </p>
+        )}
       </div>
-      <p className="fine-print">Owners always see their own memories.</p>
     </div>
   );
 }
