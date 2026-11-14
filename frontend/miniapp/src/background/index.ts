@@ -13,6 +13,7 @@ import {createCamera, createFrameLoop} from "./camera"
 import {createTurns} from "./turn"
 
 const SETTINGS_KEY = "settings"
+const RECENT_PHOTO_MS = 8_000 // covers the 5 s frame interval plus a slow BLE transfer
 
 function validSendMode(value: unknown): SendMode {
   return value === "audio" || value === "both" ? value : "text"
@@ -30,7 +31,7 @@ registerMiniapp<Channels>(async (session) => {
     error: null,
     photo: null,
     photoError: null,
-    frames: {everyMs: null, sent: 0, error: null},
+    frames: {mode: null, sent: 0, error: null},
   }
 
   const push = (patch: Partial<Status>) => {
@@ -40,12 +41,20 @@ registerMiniapp<Channels>(async (session) => {
 
   const settings = () => status.settings
   const camera = createCamera(session, push)
-  const turns = createTurns(session, {settings, capture: camera.capture, push})
+  // A turn reuses the frame loop's latest photo when it is fresh, instead of waiting for a new one.
+  // While video streams the camera is taken, so a turn goes without a photo.
+  const turnPhoto = () => {
+    if (frames.videoOn()) return Promise.resolve(null)
+    const url = camera.recent(RECENT_PHOTO_MS)
+    return url ? Promise.resolve(url) : camera.capture()
+  }
+  const turns = createTurns(session, {settings, capture: turnPhoto, push})
   const frames = createFrameLoop({
     camera,
     settings,
     turnBusy: turns.busy,
     push,
+    stream: session.stream,
     say: (text) => {
       session.speaker.speak(text).catch((err: unknown) => console.warn("guidance speech failed:", messageOf(err)))
     },
@@ -115,7 +124,7 @@ registerMiniapp<Channels>(async (session) => {
     return {ok: true, url, tookMs: Date.now() - t0}
   })
 
-  session.ui.on("setFrames", ({everyMs}) => frames.set(everyMs))
+  session.ui.on("setFrames", ({mode}) => frames.set(mode))
   session.ui.onOpen(() => {
     camera.warm()
     session.ui.send("status", status)
