@@ -1,4 +1,4 @@
-// Spatial Recall — MongoDB Atlas setup
+// SafeSpace — MongoDB Atlas setup
 //
 // Creates the collections, validators and indexes described in
 // docs/02-mongodb-schema-and-governance.md. Field names and values follow

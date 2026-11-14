@@ -27,7 +27,7 @@ export function usePersistentState(key: string, initial: string): [string, (valu
 }
 
 export function useMute(): [boolean, (muted: boolean) => void] {
-  const [stored, setStored] = usePersistentState('homeMemory.muted', 'no');
+  const [stored, setStored] = usePersistentState('safespace.muted', 'no');
   const setMuted = useCallback(
     (muted: boolean) => {
       if (muted) stopSpeaking();

@@ -1,6 +1,6 @@
 # Frontend
 
-Browser and smart-glasses side of Home memory:
+Browser and smart-glasses side of SafeSpace:
 
 - `web/` - the judge dashboard (`/`) and the phone/laptop capture page (`/capture`) (Vite, React, TypeScript)
 - `miniapp/` - the Mentra Live glasses miniapp (`@mentra/miniapp`)

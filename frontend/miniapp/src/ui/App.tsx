@@ -37,7 +37,7 @@ export function App() {
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}>
-      <MiniappHeader title="Home Memory" />
+      <MiniappHeader title="SafeSpace" />
       <main className="content">
         {status === null ? (
           <p className="muted">Connecting…</p>

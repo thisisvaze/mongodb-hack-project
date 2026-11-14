@@ -891,7 +891,7 @@ function openEventStream(req, res) {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
-  res.write(': connected to the MOCK home memory event stream\n\n');
+  res.write(': connected to the MOCK SafeSpace event stream\n\n');
   const client = { res, base: baseOf(req) };
   sseClients.add(client);
   const ping = setInterval(() => res.write(': ping\n\n'), PING_MS);
@@ -943,7 +943,7 @@ async function route(req, res) {
     case '/':
       return sendJson(res, 200, {
         mock: true,
-        about: 'MOCK home memory backend. In-memory data, keyword logic, no AI. See docs/api-contract.md.',
+        about: 'MOCK SafeSpace backend. In-memory data, keyword logic, no AI. See docs/api-contract.md.',
         endpoints: ['GET /api/state', 'POST /api/turn', 'POST /api/frames', 'PUT /api/rules', 'GET /api/events'],
       });
     case '/api/state': {
@@ -1011,7 +1011,7 @@ try {
 }
 
 console.log(
-  `[MOCK] Home memory MOCK server (not the real backend: in-memory data, keyword logic, no AI) ` +
+  `[MOCK] SafeSpace MOCK server (not the real backend: in-memory data, keyword logic, no AI) ` +
     `listening on http://localhost:${PORT}${HOST ? ` (host ${HOST})` : ' (loopback only; HOST=0.0.0.0 opens it to the network)'}`,
 );
 console.log(

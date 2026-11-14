@@ -9,7 +9,7 @@ export function App() {
   if (path === '/capture') return <Capture />;
   return (
     <main className="not-found">
-      <h1>Home memory</h1>
+      <h1>SafeSpace</h1>
       <p>There is no page at {path}.</p>
       <p>
         <a href={linkWithApi('/')}>Dashboard</a> or <a href={linkWithApi('/capture')}>Capture page</a>

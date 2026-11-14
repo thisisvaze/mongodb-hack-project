@@ -13,7 +13,7 @@ import type {
   TurnResponse,
 } from './types';
 
-const STORAGE_KEY = 'homeMemory.apiBase';
+const STORAGE_KEY = 'safespace.apiBase';
 const FALLBACK_API_BASE = 'http://localhost:8787';
 const TURN_TIMEOUT_MS = 15_000;
 const RETRY_MS = 3_000;
@@ -130,7 +130,7 @@ export function readInitialSpace(): string {
   const fromUrl = new URLSearchParams(window.location.search).get('space')?.trim();
   if (fromUrl) return fromUrl;
   try {
-    const saved = localStorage.getItem('spatialRecall.spaceId')?.trim();
+    const saved = localStorage.getItem('safespace.spaceId')?.trim();
     if (saved) return saved;
   } catch {
     // Ignore blocked storage.
@@ -140,7 +140,7 @@ export function readInitialSpace(): string {
 
 export function syncSpaceParam(spaceId: string): void {
   try {
-    localStorage.setItem('spatialRecall.spaceId', spaceId);
+    localStorage.setItem('safespace.spaceId', spaceId);
   } catch {
     // Ignore blocked storage.
   }

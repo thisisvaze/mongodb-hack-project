@@ -1,4 +1,4 @@
-# Spatial Recall — Governed Multimodal & Voice Memory for Blind & Low-Vision Support
+# SafeSpace — Governed Multimodal & Voice Memory for Blind & Low-Vision Support
 
 > **"A memory that remembers where things are, so a blind person doesn't have to ask" on Mentra Live Smart Glasses**
 > Built for *Agents in Context Toronto: a MongoDB Hackathon* (Sat, Nov 14, 2026)

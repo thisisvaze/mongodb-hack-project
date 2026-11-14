@@ -18,7 +18,7 @@ const STREAM_LABEL: Record<StreamStatus, string> = {
 
 export function Dashboard() {
   const { data, status, loadError, fresh, reload, applyRules } = useSpace(SPACE_ID);
-  const [actingId, setActingId] = usePersistentState('homeMemory.actingUser', '');
+  const [actingId, setActingId] = usePersistentState('safespace.actingUser', '');
   const [muted, setMuted] = useMute();
   const [text, setText] = useState('');
   const [pending, setPending] = useState(false);
@@ -62,7 +62,7 @@ export function Dashboard() {
   return (
     <div className="dash">
       <header className="topbar">
-        <h1>Home memory</h1>
+        <h1>SafeSpace</h1>
         <dl className="topbar-facts">
           <div>
             <dt>Space</dt>

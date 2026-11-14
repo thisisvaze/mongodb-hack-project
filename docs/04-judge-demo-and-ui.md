@@ -51,7 +51,7 @@ To make the invisible infrastructure **unmissable** (both in the 90-second Round
 **Setup on table (takes 10 seconds):** The table plays a kitchen counter: a kettle or water jug (shared landmark), a laptop + charger, keys, and a wallet. Projector shows the Control Room UI; speaker output split/mirrored so judges hear ElevenLabs clearly.
 
 - **0:00 – 0:20 | The Hook (20s)**
-  - *"Tools like Be My Eyes tell a blind person what they're pointing at right now — but they have total amnesia. Put your keys down, have someone tidy up, walk into a room you haven't been in for a week — and you're back to asking a sighted person where everything is. And you can't give someone an always-on camera without strict memory governance. We built Spatial Recall on Mentra Live glasses, MongoDB Atlas, Voyage Multimodal 3.5, and ElevenLabs."*
+  - *"Tools like Be My Eyes tell a blind person what they're pointing at right now — but they have total amnesia. Put your keys down, have someone tidy up, walk into a room you haven't been in for a week — and you're back to asking a sighted person where everything is. And you can't give someone an always-on camera without strict memory governance. We built SafeSpace on Mentra Live glasses, MongoDB Atlas, Voyage Multimodal 3.5, and ElevenLabs."*
 - **0:20 – 0:55 | Beat 1 — Fused Camera + Voice Ingest & Shared/Private Split (35s)**
   - **User A** (wearing Mentra Live) looks across the counter and speaks: *"The kettle is at the left corner of the counter — and I'm leaving my wallet right next to my laptop charger."*
   - Point at Dashboard Panel 2: **Two cards pop in live via Atlas Change Streams** — `kettle` approved as `🟢 SHARED`, `wallet` quarantined as `🔒 PRIVATE (user_a)`.

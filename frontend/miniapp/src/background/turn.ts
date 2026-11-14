@@ -30,7 +30,7 @@ const PHOTO_WAIT_MS = 2_500 // longest a finished utterance waits for its photo
 const MAX_AUDIO_BYTES = 1_200_000 // ~37 s of 16 kHz mono 16-bit PCM
 
 const SAY = {
-  notSetUp: "Not set up yet. Open Home Memory on the phone.",
+  notSetUp: "Not set up yet. Open SafeSpace on the phone.",
   listening: "Listening.",
   heardNothing: "I didn't hear anything.",
   noAudio: "No microphone audio arrived.",

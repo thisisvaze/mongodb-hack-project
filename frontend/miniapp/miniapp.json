@@ -1,8 +1,8 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
-  "packageName": "com.homememory.glasses",
+  "packageName": "com.safespace.glasses",
   "version": "1.0.0",
-  "name": "Home Memory",
+  "name": "SafeSpace",
   "description": "Press the glasses button and speak a note or a question about your home.",
   "icon": "icon.png",
   "type": "standard",

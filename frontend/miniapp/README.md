@@ -1,4 +1,4 @@
-# Home Memory - glasses miniapp
+# SafeSpace - glasses miniapp
 
 The Mentra miniapp for Mentra Live glasses. The wearer presses the glasses button, speaks a note or a question, and hears the backend's reply. It follows `docs/api-contract.md` and calls `GET /api/state`, `POST /api/turn` and `POST /api/frames`.
 
@@ -36,9 +36,9 @@ bun run release     # install a fixed copy that runs without the laptop
 
 ## Set the API base URL and Send mode
 
-There is no default server. Until one is saved, a button press says "Not set up yet. Open Home Memory on the phone."
+There is no default server. Until one is saved, a button press says "Not set up yet. Open SafeSpace on the phone."
 
-1. Open the Home Memory tile in the Mentra App.
+1. Open the SafeSpace tile in the Mentra App.
 2. Under Setup, type the API base URL, for example `https://example.trycloudflare.com`. A missing `https://` is added for you.
 3. Leave the space id as `home` unless the backend uses another one.
 4. Tap Test connection. It calls `GET /api/state` and shows the number of users and memories, or the error.
@@ -70,7 +70,7 @@ A short or long press of the glasses button starts a turn:
 
 ## Test these on the real glasses first
 
-Run `bun dev`, keep the terminal visible, open the Home Memory tile on the phone.
+Run `bun dev`, keep the terminal visible, open the SafeSpace tile on the phone.
 
 1. Button events arrive (`button <id> short` or `long` in terminal) without taking a local gallery photo.
 2. How fast the listening beep plays after pressing the button now that mic subscriptions open per turn.

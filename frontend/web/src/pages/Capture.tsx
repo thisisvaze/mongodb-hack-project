@@ -45,8 +45,8 @@ function validSendMode(raw: string): SendMode {
 export function Capture() {
   const [users, setUsers] = useState<User[]>([]);
   const [load, setLoad] = useState<Load>({ state: 'loading' });
-  const [userId, setUserId] = usePersistentState('homeMemory.captureUser', '');
-  const [rawSendMode, setRawSendMode] = usePersistentState('homeMemory.sendMode', 'text');
+  const [userId, setUserId] = usePersistentState('safespace.captureUser', '');
+  const [rawSendMode, setRawSendMode] = usePersistentState('safespace.sendMode', 'text');
   const sendMode = validSendMode(rawSendMode);
   const [muted, setMuted] = useMute();
   const [camera, setCamera] = useState<Camera>({ kind: 'off' });
@@ -381,7 +381,7 @@ export function Capture() {
     <div className="capture">
       <header className="capture-top">
         <h1>
-          Home memory <span className="capture-sub">Capture</span>
+          SafeSpace <span className="capture-sub">Capture</span>
         </h1>
         <a className="plain-link" href={linkWithApi('/')}>
           Dashboard
