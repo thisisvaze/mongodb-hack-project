@@ -242,6 +242,8 @@ pub struct App {
     /// The most recent turn in each space, for a dashboard that has just loaded.
     pub latest_turns: std::sync::Mutex<HashMap<String, Value>>,
     sessions: Mutex<HashMap<String, Session>>,
+    /// One lock per thing in a space, so frames indexed side by side cannot add the same thing twice.
+    store_locks: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl App {
@@ -278,6 +280,15 @@ impl App {
         sessions.iter().filter(|(_, s)| s.venue_id == space_id).filter_map(|(user_id, s)| s.latest.as_ref().map(|frame| frame_json(base, user_id, frame))).collect()
     }
 
+    /// The user's newest frame in this space, if it arrived within `max_age_ms`.
+    /// A spoken turn that comes without a picture (the camera is busy streaming
+    /// video) can then still be about what the person is looking at.
+    pub async fn recent_frame(&self, user_id: &str, space_id: &str, max_age_ms: u64) -> Option<Frame> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions.get(user_id).filter(|s| s.venue_id == space_id)?;
+        session.latest.clone().filter(|frame| now_ms().saturating_sub(frame.at_ms) <= max_age_ms)
+    }
+
     /// True if live guidance may speak this thing to this user now; false if
     /// it was spoken too recently. Saying it once is useful, repeating it every
     /// frame is noise.
@@ -292,11 +303,24 @@ impl App {
         !recently
     }
 
+    /// The lock that orders writes about one thing in one space. Extraction,
+    /// embedding and different things run side by side; only reading what is
+    /// remembered about a thing and writing the change is done one frame at a time.
+    pub fn store_lock(&self, space_id: &str, item_key: &str) -> Arc<Mutex<()>> {
+        self.store_locks.lock().unwrap().entry(format!("{space_id}\n{item_key}")).or_default().clone()
+    }
+
     /// Records that a frame is being processed outside the gate, so the gate does not pick it up again.
     pub async fn mark_indexed(&self, user_id: &str, frame: &Frame) {
         if let Some(session) = self.sessions.lock().await.get_mut(user_id) {
-            session.last_indexed_hash = Some(frame.hash);
-            session.last_indexed_at = frame.at_ms;
+            // Frames posted side by side can be marked out of order. The mark
+            // only moves forward, and covers the newest frame held: every one
+            // of them is being indexed by its own request.
+            let newest = session.latest.as_ref().filter(|l| l.at_ms >= frame.at_ms).unwrap_or(frame);
+            if newest.at_ms >= session.last_indexed_at {
+                session.last_indexed_hash = Some(newest.hash);
+                session.last_indexed_at = newest.at_ms;
+            }
         }
     }
 
@@ -361,7 +385,7 @@ pub async fn build_app(cfg: Config) -> anyhow::Result<Arc<App>> {
             }
         }))
         .build()?;
-    Ok(Arc::new(App { stats: Stats::default(), embedder, gemini, store, http, events, latest_turns: Default::default(), sessions: Mutex::default(), cfg }))
+    Ok(Arc::new(App { stats: Stats::default(), embedder, gemini, store, http, events, latest_turns: Default::default(), sessions: Mutex::default(), store_locks: Default::default(), cfg }))
 }
 
 /// A frame as the contract describes it. The link points at this server's own copy.

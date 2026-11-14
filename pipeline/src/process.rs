@@ -183,32 +183,15 @@ pub async fn observe(app: &App, t: &Trigger) -> anyhow::Result<Vec<Stored>> {
         let embed_ms = started.elapsed().as_millis() as u64;
 
         let started = Instant::now();
-        // Items of one observation are different things, so they are reconciled side by side.
-        let space = &space;
-        let results = futures_util::future::join_all(decided.into_iter().zip(vectors).map(|((item, decision), vector)| {
-            let carried = carries(&decision);
-            let picture = thumb.filter(|_| carried && !item.contains_pii);
-            let (item_key, summary) = (item.item_key.clone(), item.summary.clone());
-            async move { (item_key, summary, reconcile(app, t, space, item, decision, vector, picture, carried, now).await) }
-        }))
-        .await;
-        for (item_key, summary, result) in results {
-            match result {
-                Ok(id) => stored.push(Stored { id, summary }),
-                // One item failing must not cost the others.
-                Err(e) => {
-                    stats.failed.fetch_add(1, Relaxed);
-                    tracing::error!(user = %t.user_id, item = %item_key, "item failed: {e:#}");
-                }
-            }
-        }
-        if let (Some((scene, decision)), Some(vector)) = (view, view_vector) {
-            let view_doc = doc! {
+        // The view of a walk-through frame, ready to store. Its key is unique, so it needs no lock.
+        let view_doc = match (view, view_vector) {
+            (Some((scene, decision)), Some(vector)) => Some(doc! {
                 "_id": format!("m_{}", ObjectId::new().to_hex()),
                 "space_id": &t.venue_id,
                 "owner_id": &t.user_id,
                 "item": area.clone().unwrap_or_else(|| "view of the space".to_string()),
-                "item_key": format!("view_{:x}", now.timestamp_millis()),
+                // Unique even when two frames are indexed in the same millisecond.
+                "item_key": format!("view_{}", ObjectId::new().to_hex()),
                 "summary": &scene,
                 "location": area.clone(),
                 "topic": &decision.topic,
@@ -225,14 +208,52 @@ pub async fn observe(app: &App, t: &Trigger) -> anyhow::Result<Vec<Stored>> {
                 "tactile_anchor": &scene,
                 "embedding": vector,
                 "purge_at": Bson::Null,
-            };
-            // A view is map data, not a decision, so it gets no audit row.
-            match app.store.apply(Change::Add(view_doc), None).await {
-                Ok(()) => {
-                    stats.views_stored.fetch_add(1, Relaxed);
-                }
-                Err(e) => tracing::warn!(user = %t.user_id, "view not stored: {e:#}"),
+            }),
+            _ => None,
+        };
+        // A view is map data, not a decision, so it gets no audit row.
+        let store_view = async {
+            match view_doc {
+                Some(view_doc) => Some(app.store.apply(Change::Add(view_doc), None).await),
+                None => None,
             }
+        };
+
+        // Items of one observation are different things, so they are reconciled
+        // side by side, and the view is stored alongside them. Frames can be
+        // processed side by side too (a recorded video is indexed several
+        // frames at a time), and each reads what is remembered about a thing and
+        // then writes. That part runs one frame at a time per thing: the second
+        // frame to see a thing finds the first one's memory and strengthens it
+        // instead of adding another.
+        let space = &space;
+        let reconcile_all = futures_util::future::join_all(decided.into_iter().zip(vectors).map(|((item, decision), vector)| {
+            let carried = carries(&decision);
+            let picture = thumb.filter(|_| carried && !item.contains_pii);
+            let (item_key, summary) = (item.item_key.clone(), item.summary.clone());
+            async move {
+                let lock = app.store_lock(&t.venue_id, &item_key);
+                let _one_at_a_time = lock.lock().await;
+                (item_key, summary, reconcile(app, t, space, item, decision, vector, picture, carried, now).await)
+            }
+        }));
+        let (results, view_stored) = tokio::join!(reconcile_all, store_view);
+        for (item_key, summary, result) in results {
+            match result {
+                Ok(id) => stored.push(Stored { id, summary }),
+                // One item failing must not cost the others.
+                Err(e) => {
+                    stats.failed.fetch_add(1, Relaxed);
+                    tracing::error!(user = %t.user_id, item = %item_key, "item failed: {e:#}");
+                }
+            }
+        }
+        match view_stored {
+            Some(Ok(())) => {
+                stats.views_stored.fetch_add(1, Relaxed);
+            }
+            Some(Err(e)) => tracing::warn!(user = %t.user_id, "view not stored: {e:#}"),
+            None => {}
         }
         let store_ms = started.elapsed().as_millis() as u64;
 

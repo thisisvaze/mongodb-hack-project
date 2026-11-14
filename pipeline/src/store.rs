@@ -148,6 +148,28 @@ impl Store {
     /// memory never changes without a record of why. Retries when two writers
     /// collide on the same memory.
     pub async fn apply(&self, change: Change, audit_event: Option<Document>) -> anyhow::Result<()> {
+        // One write to one document is already all-or-nothing, so it needs no
+        // transaction. This is most writes while a video is indexed (a thing
+        // seen again, a stored view) and saves two round trips on each.
+        if audit_event.is_none() {
+            match &change {
+                Change::Add(new_doc) => {
+                    self.memories.insert_one(new_doc.clone()).await.context("adding a memory")?;
+                    return Ok(());
+                }
+                Change::Reinforce { id, seen_at, expires_at } => {
+                    let mut set = doc! { "updated_at": *seen_at };
+                    if let Some(expires_at) = expires_at {
+                        set.insert("expires_at", *expires_at);
+                    }
+                    let update = doc! { "$inc": { "reinforcement_count": 1 }, "$set": set };
+                    let matched = self.memories.update_one(doc! { "_id": id.clone(), "status": "active" }, update).await.context("reinforcing a memory")?.matched_count;
+                    anyhow::ensure!(matched == 1, "the memory was changed by someone else at the same moment");
+                    return Ok(());
+                }
+                Change::Supersede { .. } => {}
+            }
+        }
         for attempt in 1..=TRANSACTION_ATTEMPTS {
             match self.try_apply(&change, audit_event.as_ref()).await {
                 Ok(true) => return Ok(()),

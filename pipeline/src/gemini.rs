@@ -14,21 +14,23 @@ const ATTEMPTS: u32 = 3;
 const PROMPT: &str = r#"You maintain a memory of a place (a home, an office, a venue) for a blind or low-vision person who wears camera glasses.
 From the camera frame and/or what was just said, list the things worth remembering so the person can find them or avoid them later. Return an empty list if there is nothing.
 
+Which things: list every landmark for getting around that is in view (exits, doors, restrooms, stairs, lifts, counters, tables, seating, safety equipment, readable signs), then anything on the floor that could be walked into, then personal things and supplies. At most eight things. Do not list people, plain walls, floors, ceilings or lights. Include each door, counter, table and seat in view, even an unmarked one. Do not list the same thing twice: a sign and the box, cabinet or door it sits on, above or beside are one single entry, named by what the sign says or shows (a defibrillator sign and the wall box under it are one entry, "defibrillator"). Several identical things together are one entry ("standing tables", "row of glass doors"). Without a sign or a clear view, call a thing by its shape and say "unmarked" in the summary (never in the item_key); never guess what is inside a cabinet or behind a door. Leave out small wall boxes, panels, switches and dispensers that you cannot identify for certain. A cover, drain or vent that is flush with the floor is not a thing to list.
+
 For each thing:
-- item_key: a short lowercase slug with underscores that stays the same each time the same thing is seen, e.g. "house_keys", "restroom_door", "ibuprofen_bottle", "stairs_to_second_floor", "kettle". A hazard gets a key of its own that names the hazard, e.g. "wet_kitchen_floor" or "basket_on_stairs", never the key of the fixture it is on.
+- item_key: a short lowercase slug with underscores that names the kind of thing and, if it has one, its sign text or room number, e.g. "house_keys", "restroom_door", "room_204_door", "ibuprofen_bottle", "stairs_to_second_floor", "kettle". It must be the same from every angle and on every visit, so never put a side, direction, position, order or count in it ("glass_doors", not "glass_doors_right"; "high_table", not "second_high_table"). A hazard gets a key of its own that names the hazard, e.g. "wet_kitchen_floor" or "basket_on_stairs", never the key of the fixture it is on.
 - topic: the best fit from the list of topics given below, or "other" if none fits. As a guide: fixed parts of the place and landmarks (doors, stairs, lifts, restrooms, exits, counters, furniture, appliances, signs) are the place-guide topic; a temporary danger is the hazard topic; medicines are the medication topic; keys, wallet, phone, bag are valuables; papers and cards are documents; consumables are supplies.
-- summary: one plain sentence saying what it is and where it is.
-- location: a few words naming the place relative to other fixed things, not to the camera, e.g. "left jacket pocket", "top kitchen drawer", "beside the entrance doors", "end of the corridor past the reception counter".
-- tactile_anchor: how to reach it by touch and body position only, e.g. "On the waist-high counter, a hand's width left of the kettle." or "Three steps ahead, door on your right, push bar at waist height." Never use colour or appearance.
+- summary: one plain sentence of at most thirty words that is true from anywhere in the place, never "in front of you", "to your left" or "the left wall". Say what it is, what it is for or where it leads, and one thing that identifies it by touch (shape, size, height or material). If it has a sign, label, room number or door plate, copy that text word for word in quotes. Say what a door leads to only if a sign or the view shows it; otherwise call it "unmarked". End with the area it is in.
+- location: where it is in the place, in plain words, as the area plus one or two fixed things next to it, e.g. "top kitchen drawer, left of the cooker", "main corridor, on the wall between the restroom doors and the staff-only door", "reception area, beside the entrance doors". It must be right for someone arriving from any direction. The person may come from the opposite direction, where the camera's left is their right, so "the left wall", "the right wall", "on the left", "on the right side" are wrong here and so are "you", "your", "ahead", "behind", "foreground", "background", clock positions and steps. Name a wall by what is on it or next to it ("the wall with the glass doors", "the wall opposite the bench"). "Left of" and "right of" are allowed only directly before a named fixed thing ("left of the lift doors").
+- tactile_anchor: how to reach it by touch and body position from where the camera is, e.g. "On the waist-high counter, a hand's width left of the kettle." or "Three steps ahead, door on your right, push bar at waist height." Give the height and what the hand meets first. Never use colour or appearance.
 - bbox: [ymin, xmin, ymax, xmax] on a 0-1000 scale if it is visible in the frame, otherwise null.
 - moved: true if the thing is in the list of remembered things below and is now somewhere different from the place remembered there, or the speaker says they moved it or put it somewhere new. false if it is where it was remembered, or it is not in that list.
 - contains_pii: true if it shows or names a person, a face, an identity or bank document, mail, or a screen with personal content.
 
-Write every field in English. Do not list people. Do not list the same thing twice. At most six things, the most useful for getting around first.
+Write every field in English. Never use colour. Before you answer, reread each summary and location: if one contains "left wall", "right wall", "on the left", "on the right", "ahead" or "you", rewrite it with named fixed things.
 
 Also describe the view itself, only when a camera frame is given (otherwise both are null):
-- area: a short name for where the camera is, e.g. "reception area by the entrance", "corridor outside the meeting rooms".
-- scene: two short sentences for a person standing where the camera is and facing the same way, saying what is around them and in which direction, in steps and clock positions, e.g. "You are facing the reception counter, about four steps ahead. The entrance doors are at your nine o'clock, and bar stools stand between you and the counter." No colours, and nothing about people."#;
+- area: a generic name of two to four words for the part of the place the camera is in, built from its main fixed feature. Use one of these when it fits: "main corridor", "reception area", "lounge area", "snack counter area", "kitchen", "lift lobby", "restroom entrance", "entrance hall"; a room with a sign takes the sign's name. No direction, position or detail words, so that frames taken a few steps apart get the same name. Use this same name wherever a summary or location names the area.
+- scene: two or three short sentences for a person standing where the camera is and facing the same way: what is straight ahead and how many steps, what is on the left and on the right by clock position, and anything at floor level in the way (if nothing is in the way, say nothing about it; never say the way is clear or safe), e.g. "You are facing the reception counter, about four steps ahead. The entrance doors are at your nine o'clock and a row of chairs at your three o'clock. Bar stools stand in the way two steps ahead." No colours, and nothing about people."#;
 
 const ANSWER_PROMPT: &str = r#"You answer a spoken question for a blind or low-vision person, using only the memories listed below.
 - Reply in English, in one or two short sentences that will be read aloud.
@@ -92,18 +94,18 @@ fn response_schema() -> Value {
     json!({
       "type": "OBJECT",
       "properties": {
-        "area": { "type": "STRING", "nullable": true },
-        "scene": { "type": "STRING", "nullable": true },
+        "area": { "type": "STRING", "nullable": true, "description": "Generic two-to-four-word name of the part of the place, such as main corridor. No direction or position words." },
+        "scene": { "type": "STRING", "nullable": true, "description": "What is ahead, left and right of the camera in steps and clock positions, and anything on the floor in the way." },
         "items": {
         "type": "ARRAY",
         "items": {
             "type": "OBJECT",
             "properties": {
-                "item_key": { "type": "STRING" },
+                "item_key": { "type": "STRING", "description": "Stable slug for the thing, the same from every angle. No side, direction, order or count." },
                 "topic": { "type": "STRING" },
-                "summary": { "type": "STRING" },
-                "location": { "type": "STRING", "nullable": true },
-                "tactile_anchor": { "type": "STRING", "nullable": true },
+                "summary": { "type": "STRING", "description": "What it is, what it is for, a touch-recognisable property, any sign text word for word, and the area it is in. True from anywhere in the place." },
+                "location": { "type": "STRING", "nullable": true, "description": "The area plus fixed things next to it. Never relative to the camera: no left wall, right wall, ahead, steps or clock positions." },
+                "tactile_anchor": { "type": "STRING", "nullable": true, "description": "How to reach it by touch from where the camera is: steps, side, height, what the hand meets first." },
                 "bbox": { "type": "ARRAY", "items": { "type": "INTEGER" }, "nullable": true },
                 "moved": { "type": "BOOLEAN" },
                 "contains_pii": { "type": "BOOLEAN" }

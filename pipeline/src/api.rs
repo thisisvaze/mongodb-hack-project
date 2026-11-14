@@ -420,6 +420,9 @@ async fn guide(app: &App, space_id: &str, user_id: &str, scope: &Scope, frame: &
 
 // --- POST /api/turn ----------------------------------------------------------
 
+/// How old a frame from the live stream may be and still count as what the person is looking at.
+const RECENT_FRAME_MS: u64 = 6_000;
+
 #[derive(Deserialize)]
 pub struct TurnBody {
     space_id: String,
@@ -538,7 +541,9 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
                 None
             }
         },
-        Ok(None) => None,
+        // No picture with the words: while the glasses stream video the camera
+        // is taken, so the newest frame from that stream stands in for it.
+        Ok(None) => app.recent_frame(&body.user_id, &body.space_id, RECENT_FRAME_MS).await,
         Err(e) => {
             tracing::warn!(user = %body.user_id, "turn image ignored: {e:#}");
             None

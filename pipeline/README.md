@@ -75,8 +75,13 @@ Two scripts stand in for the glasses. Both take
 `http://127.0.0.1:8080`).
 
 `scripts/replay.sh` indexes a recorded walk-through (needs `ffmpeg` and `curl`).
+It sends four frames at a time (`PARALLEL=4`; eight was measured no faster) and
+skips frames that repeat the one before (`DEDUPE=1`). On a 20-frame clip that
+took 34 s instead of 127 s one at a time. The server orders the writes about
+any one thing, so two frames that see the same thing strengthen one memory
+instead of adding two.
 It cuts the video into frames and posts each one to `POST /api/frames` with
-`"index": true`, waiting for each reply, then prints `/stats`.
+`"index": true`, then prints the total time and `/stats`.
 
 `scripts/live.sh` runs live guidance over a video file, or over a stream that
 ffmpeg can read (`rtsp://`, `rtmp://`, `srt://`, an HLS `.m3u8`). It needs
@@ -783,6 +788,9 @@ Measured during development, not guarantees.
   I holding", "what is in front of me") that comes with a picture is answered by
   Gemini looking at that picture, not from memory. It writes a `query_answered`
   audit row with no memory ids.
+- **No picture with the words.** While the glasses stream video their camera is
+  taken, so a turn arrives without a picture. The newest frame from that user's
+  stream, if under six seconds old, is used in its place.
 - **English.** A turn mostly in another script or language is rewritten in
   English before it is sorted, stored or answered.
 
