@@ -788,6 +788,13 @@ Measured during development, not guarantees.
   I holding", "what is in front of me") that comes with a picture is answered by
   Gemini looking at that picture, not from memory. It writes a `query_answered`
   audit row with no memory ids.
+- **How long the name lasts.** The name has to be in the sentence, or in one said
+  shortly before it: after "Robin", whatever that person says in the next eight
+  seconds (`WAKE_WINDOW_SECS`) is also taken as said to the glasses, so "Robin."
+  and then "what's this?" works. Each use of the name starts the eight seconds again.
+- **A glasses app that always listens** and does not mark its turns `passive`
+  needs `WAKE_WORD_REQUIRED=true` on the server; otherwise every overheard
+  sentence is treated as a request.
 - **No picture with the words.** While the glasses stream video their camera is
   taken, so a turn arrives without a picture. The newest frame from that user's
   stream, if under six seconds old, is used in its place.

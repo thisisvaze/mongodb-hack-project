@@ -77,6 +77,8 @@ pub struct Config {
     /// True: nothing is answered unless the name is said. False: only turns
     /// the client marks as overheard ("passive") need the name.
     pub wake_word_required: bool,
+    /// How long after the name is said the next sentences still count as said to the assistant.
+    pub wake_window_ms: u64,
     /// True only for local testing: photo links may then use http and point at this machine.
     pub allow_local_image_urls: bool,
     /// The built web app (frontend/web/dist). When present, this server also serves the dashboard.
@@ -133,6 +135,7 @@ impl Config {
             public_base: env_opt("PUBLIC_BASE"),
             wake_words: env_or("WAKE_WORDS", "robin,robbin,robyn").split(',').map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty()).collect(),
             wake_word_required: env_or("WAKE_WORD_REQUIRED", "false") == "true",
+            wake_window_ms: env_or("WAKE_WINDOW_SECS", "8").parse::<u64>().unwrap_or(8) * 1000,
             allow_local_image_urls: env_or("ALLOW_LOCAL_IMAGE_URLS", "false") == "true",
             web_dir: Some(std::path::PathBuf::from(env_or("WEB_DIR", "../frontend/web/dist"))).filter(|dir| dir.join("index.html").is_file()),
         })
@@ -244,6 +247,8 @@ pub struct App {
     sessions: Mutex<HashMap<String, Session>>,
     /// One lock per thing in a space, so frames indexed side by side cannot add the same thing twice.
     store_locks: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Until when each user is taken to be talking to the assistant, after saying its name.
+    addressed_until: std::sync::Mutex<HashMap<String, u64>>,
 }
 
 impl App {
@@ -301,6 +306,19 @@ impl App {
             session.spoken.insert(item_key.to_string(), now);
         }
         !recently
+    }
+
+    /// True if this sentence is said to the assistant: it used the name, or it
+    /// follows shortly after one that did ("Robin." ... "what's this?"). Saying
+    /// the name opens that window again.
+    pub fn in_conversation(&self, user_id: &str, named: bool) -> bool {
+        let now = now_ms();
+        let mut until = self.addressed_until.lock().unwrap();
+        let open = named || until.get(user_id).is_some_and(|end| now < *end);
+        if named {
+            until.insert(user_id.to_string(), now + self.cfg.wake_window_ms);
+        }
+        open
     }
 
     /// The lock that orders writes about one thing in one space. Extraction,
@@ -385,7 +403,7 @@ pub async fn build_app(cfg: Config) -> anyhow::Result<Arc<App>> {
             }
         }))
         .build()?;
-    Ok(Arc::new(App { stats: Stats::default(), embedder, gemini, store, http, events, latest_turns: Default::default(), sessions: Mutex::default(), store_locks: Default::default(), cfg }))
+    Ok(Arc::new(App { stats: Stats::default(), embedder, gemini, store, http, events, latest_turns: Default::default(), sessions: Mutex::default(), store_locks: Default::default(), addressed_until: Default::default(), cfg }))
 }
 
 /// A frame as the contract describes it. The link points at this server's own copy.

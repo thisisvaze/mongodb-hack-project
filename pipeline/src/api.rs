@@ -529,7 +529,9 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
     }
     let text = english_only(&app, text).await;
     // "Robin, what's this?": the name says the person is talking to the glasses. It is not part of the request.
-    let (addressed, text) = guard::strip_wake_word(&text, &app.cfg.wake_words);
+    let (named, text) = guard::strip_wake_word(&text, &app.cfg.wake_words);
+    // The name also covers what is said in the next few seconds, so "Robin." and then the question works.
+    let addressed = app.in_conversation(&body.user_id, named);
     let english_ms = clock.elapsed().as_millis() as u64 - space_ms;
 
     // The turn's picture also becomes the user's latest frame. A bad picture must not lose the words.
