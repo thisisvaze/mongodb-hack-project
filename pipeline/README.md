@@ -779,9 +779,16 @@ These follow `backend/guardrails` (the JavaScript reference) and live in
 | The search filter is checked again | After Atlas Vector Search returns, each result is checked in code against the asker's role. Anything that should not be there is dropped and logged as an error. |
 | A claim to be someone else changes nothing | "I'm the resident" from a visitor is answered as a visitor, and the audit row adds "Ignored a spoken claim to be resident; checked as role visitor." |
 | Rule changes are checked | `PUT /api/rules` refuses a change that removes a role a member still has, or takes `["*"]` away from the space owner's role. Names must start with a letter and be at most 40 characters; `keep_for` is at most 365 days; at most 20 roles and 50 topics. A refused change gets a `rule_changed` audit row with verdict `denied`; an accepted one is described in words ("Role visitor can now see supplies."). |
+| Photo links are fetched safely | `image_url` must be https on the default port with no credentials, and its host must not resolve to a private, loopback or link-local address. At most 3 redirects, 5 seconds, 8 MB, and the reply must start like a JPEG or PNG. `ALLOW_LOCAL_IMAGE_URLS=true` relaxes this for local testing only. Unlike the JavaScript version, the connection is not pinned to the address that was checked. |
+| What gets spoken is checked | Every answer and every piece of live guidance has sentences removed that claim something is safe or clear ("the path is clear"); if nothing is left the reply is "I can't confirm that. Please check with your cane or ask someone nearby." An answer about medicine loses any advice on taking it and ends with "Please check the label before taking anything." Replies are capped at 400 characters. |
 | Forgetting is recorded either way | A forget request writes one `memory_forgotten` row (verdict `allowed`). Asking to forget someone else's memory writes `query_denied`; a request that matches nothing writes `query_answered` with verdict `info`. |
 
-Not ported: speaker labels (a note said by someone other than the wearer),
+The dashboard's optional contract fields are served too: `GET /api/state`
+includes `frames` (each user's latest frame) and `latest_turn`, and every turn
+is sent as a `turn` event on `GET /api/events`.
+
+Not ported: saying how old a memory is and who noted it, hedging a weak match,
+stopping guidance when the camera feed drops, speaker labels (a note said by someone other than the wearer),
 because no speaker information reaches this service, and the confirmation step
 before forgetting several memories at once.
 

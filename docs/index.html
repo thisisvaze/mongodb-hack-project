@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="How SafeSpace turns photos and speech from smart glasses into governed memories, and back into spoken directions.">
+<title>SafeSpace System Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: four paths to choose from, one small loop drawing (remember on top, recall below), then the steps beside the part in focus. */
+:root {
+  --bg: #F1F4F3; --surface: #FFFFFF; --fg: #16212B; --muted: #566470; --line: #C8D1D6; --edge: #B4BEC4;
+  --accent: #A85F00; --accent-soft: #FBE7C2; --on-accent: #FFFFFF;
+  --font-display: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0F151A; --surface: #19222A; --fg: #E7ECEF; --muted: #9BA8B2; --line: #34424D; --edge: #46545F;
+    --accent: #F2B441; --accent-soft: #3B2E10; --on-accent: #1B1404;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0F151A; --surface: #19222A; --fg: #E7ECEF; --muted: #9BA8B2; --line: #34424D; --edge: #46545F;
+  --accent: #F2B441; --accent-soft: #3B2E10; --on-accent: #1B1404;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { color-scheme: light dark; }
+body { margin: 0; }
+img { max-width: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.5; }
+.page { max-width: 1000px; margin: 0 auto; padding-block: 32px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 24px; }
+h1 { font-family: var(--font-display); font-size: 30px; line-height: 1.15; margin: 0; letter-spacing: -0.01em; }
+h2 { font-family: var(--font-display); font-size: 20px; line-height: 1.25; margin: 0; text-wrap: balance; }
+p { margin: 0; }
+.head { display: flex; flex-direction: column; gap: 8px; }
+.lede { color: var(--muted); max-width: 60ch; }
+
+.paths { display: flex; flex-wrap: wrap; gap: 8px; }
+.paths button { font: 500 15px var(--font-body); color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 9px 16px; cursor: pointer; }
+.paths button:hover { border-color: var(--accent); }
+.paths button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button:focus-visible, .node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.map { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.map svg { display: block; width: 100%; min-width: 720px; height: auto; }
+.row-label { font: 600 11px var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; fill: var(--muted); }
+.node { cursor: pointer; }
+.node rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.node .t { font: 600 16px var(--font-body); fill: var(--fg); }
+.node .s { font: 400 12.5px var(--font-body); fill: var(--muted); }
+.node:hover rect { stroke: var(--accent); }
+.node.onpath rect { stroke: var(--accent); }
+.node.now rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2.6; }
+.node.dim { opacity: 0.35; }
+.edge { fill: none; stroke: var(--edge); stroke-width: 1.6; }
+.edge.dim { opacity: 0.18; }
+.edge.onpath { stroke: var(--accent); opacity: 0.5; stroke-width: 2; }
+.edge.now { stroke: var(--accent); opacity: 1; stroke-width: 3; stroke-dasharray: 8 6; animation: flow 0.9s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -28; } }
+@media (prefers-reduced-motion: reduce) { .edge.now { animation: none; } }
+.mk-base { fill: var(--edge); } .mk-path { fill: var(--accent); }
+
+.below { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .below { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.controls { display: flex; gap: 6px; }
+.controls button { font: 500 14px var(--font-body); color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+.controls button:hover { border-color: var(--accent); }
+.result { color: var(--muted); font-size: 15px; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+ol.steps button { width: 100%; text-align: left; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; font: inherit; color: var(--fg); background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 9px 10px; cursor: pointer; }
+ol.steps button:hover { border-color: var(--line); }
+ol.steps button[aria-current="step"] { background: var(--accent-soft); border-color: var(--accent); }
+.num { width: 26px; height: 26px; border-radius: 50%; background: var(--line); color: var(--fg); font: 600 13px/26px var(--font-body); text-align: center; font-variant-numeric: tabular-nums; }
+button[aria-current="step"] .num { background: var(--accent); color: var(--on-accent); }
+.kicker { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.part-text { max-width: 52ch; }
+.fact { color: var(--muted); font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="head">
+    <h1>SafeSpace system map</h1>
+    <p class="lede">The glasses send photos and speech. SafeSpace remembers what is where, and tells the wearer in words they can act on. Pick a path to follow it.</p>
+  </header>
+
+  <div class="paths" id="paths" role="group" aria-label="Paths through the system"></div>
+
+  <div class="map" id="map" aria-label="System map"></div>
+
+  <div class="below">
+    <section class="panel" aria-labelledby="path-name">
+      <div class="panel-head">
+        <h2 id="path-name"></h2>
+        <div class="controls">
+          <button type="button" id="prev">Back</button>
+          <button type="button" id="next">Next</button>
+        </div>
+      </div>
+      <ol class="steps" id="steps"></ol>
+      <p class="result" id="path-result"></p>
+    </section>
+    <section class="panel" id="part" aria-live="polite"></section>
+  </div>
+</div>
+
+<script>
+// ---- The seven parts. x, y, w, h place each box in the drawing. ----
+const NODES = {
+  glasses:   { x: 20,  y: 150, w: 150, h: 84,  t: "Glasses",   s: "Photos and voice",
+    text: "Send a photo every few seconds, and the wearer's words when they press the button. Whatever comes back is spoken aloud.", fact: "A phone or laptop camera can stand in for the glasses." },
+  describe:  { x: 250, y: 44,  w: 160, h: 72,  t: "Describe",  s: "Gemini reads the photo",
+    text: "Looks at a photo or a sentence and lists what is worth remembering, in terms a blind person can use: steps, clock positions and touch, never colour.", fact: "About 2 seconds per photo." },
+  rules:     { x: 480, y: 44,  w: 160, h: 72,  t: "Rules",     s: "Who may see it",
+    text: "The model only suggests a topic. The space's own rules decide who can see the memory and how long it is kept. Hidden orders are refused, and card numbers and PINs are removed.", fact: "A wallet stays with its owner. A wet floor is shared for 2 hours." },
+  memory:    { x: 730, y: 140, w: 190, h: 104, t: "Memory",    s: "MongoDB Atlas",
+    text: "Stores every memory so it can be searched by meaning. Deletes what has expired on its own, and reports every change as it happens.", fact: "The venue: 11 things and 80 views of the place." },
+  find:      { x: 480, y: 276, w: 160, h: 72,  t: "Find",      s: "Voyage + Vector Search",
+    text: "Turns the photo or the question into numbers and finds the closest memories. The permission check is part of the search, so a memory you may not see is never returned.", fact: "About half a second." },
+  reply:     { x: 250, y: 276, w: 160, h: 72,  t: "Reply",     s: "Spoken back",
+    text: "For a question, Gemini words one or two sentences from what was found. For live guidance, the stored description of the spot is spoken as it is.", fact: "A question takes 1.5 to 3 seconds end to end." },
+  dashboard: { x: 750, y: 300, w: 150, h: 60,  t: "Dashboard", s: "Live view",
+    text: "Shows memories, sharing rules and the audit log as they change. You can act as any member of the space to see what each one is allowed to know.", fact: "Every answer, refusal and rule change is on the log." },
+};
+
+// ---- Connections: the line to draw for each. ----
+const EDGES = {
+  "glasses>describe": "M170,172 C212,172 206,80 244,80",
+  "describe>rules":   "M410,80 L474,80",
+  "rules>memory":     "M640,80 C770,80 825,92 825,134",
+  "memory>find":      "M730,214 C690,214 702,312 646,312",
+  "find>reply":       "M480,312 L416,312",
+  "reply>glasses":    "M250,312 C206,312 214,212 176,212",
+  "glasses>find":     "M170,192 C390,192 560,196 560,270",
+  "memory>dashboard": "M825,244 L825,294",
+};
+
+// ---- Four paths. Each step lights up connections and puts one part in focus. ----
+const PATHS = [
+  { name: "Learn a place", result: "86 frames of the venue became 11 things and 80 views.", steps: [
+    { t: "Someone walks through, and the photos are sent in.", e: ["glasses>describe"], f: "glasses" },
+    { t: "Gemini describes each photo: the things in it, and what is around you from that spot.", e: ["glasses>describe"], f: "describe" },
+    { t: "The space's rules decide who may see each thing.", e: ["describe>rules"], f: "rules" },
+    { t: "Atlas stores it, ready to be searched by meaning.", e: ["rules>memory"], f: "memory" },
+    { t: "The dashboard shows each new memory as it lands.", e: ["memory>dashboard"], f: "dashboard" },
+  ] },
+  { name: "Guide me", result: "About half a second per photo, with no call to Gemini.", steps: [
+    { t: "The glasses send a photo of what is ahead.", e: ["glasses>find"], f: "glasses" },
+    { t: "The photo is matched against views of the place stored earlier.", e: ["memory>find"], f: "find" },
+    { t: "The closest view's description becomes the reply.", e: ["find>reply"], f: "reply" },
+    { t: "The glasses say: \"You are facing two staff-only doors. One is directly ahead at about four steps.\"", e: ["reply>glasses"], f: "glasses" },
+  ] },
+  { name: "Ask a question", result: "Answered in 1.5 to 3 seconds.", steps: [
+    { t: "The wearer asks: \"Where is the restroom?\" The photo sent with it shows where they are standing.", e: ["glasses>find"], f: "glasses" },
+    { t: "The search looks only at memories this person is allowed to see.", e: ["memory>find"], f: "find" },
+    { t: "Gemini turns what was found into one or two sentences.", e: ["find>reply"], f: "reply" },
+    { t: "The glasses say: \"The restroom sign is on the left wall near the beginning of the corridor.\"", e: ["reply>glasses"], f: "glasses" },
+  ] },
+  { name: "Keep it private", result: "The refusal took 1.4 seconds and reveals nothing about the wallet.", steps: [
+    { t: "The resident says: \"I am leaving my wallet on the long counter.\"", e: ["glasses>describe"], f: "glasses" },
+    { t: "The rules file a wallet under valuables, which only its owner can see.", e: ["describe>rules", "rules>memory"], f: "rules" },
+    { t: "Later a visitor asks: \"Where is the wallet?\"", e: ["glasses>find"], f: "glasses" },
+    { t: "The search leaves the wallet out, because a visitor's role cannot see that group.", e: ["memory>find"], f: "find" },
+    { t: "The reply is: \"Sorry, I can't share that with you.\"", e: ["find>reply", "reply>glasses"], f: "reply" },
+    { t: "The attempt is on the audit log for everyone with access to see.", e: ["memory>dashboard"], f: "dashboard" },
+  ] },
+];
+
+// ---- Draw ----
+const SVGNS = "http://www.w3.org/2000/svg";
+const s = (tag, attrs = {}, kids = []) => { const n = document.createElementNS(SVGNS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); kids.forEach((k) => n.append(k)); return n; };
+const el = (tag, props = {}, kids = []) => { const n = Object.assign(document.createElement(tag), props); kids.forEach((k) => n.append(k)); return n; };
+
+const svg = s("svg", { viewBox: "0 0 940 388", role: "group" });
+svg.append(s("defs", {}, [
+  s("marker", { id: "arrow-base", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto" }, [s("path", { d: "M0,0 L10,5 L0,10 z", class: "mk-base" })]),
+  s("marker", { id: "arrow-path", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "5.5", markerHeight: "5.5", orient: "auto" }, [s("path", { d: "M0,0 L10,5 L0,10 z", class: "mk-path" })]),
+]));
+for (const [text, y] of [["Remember", 28], ["Recall", 372]]) {
+  const label = s("text", { class: "row-label", x: 250, y }); label.textContent = text; svg.append(label);
+}
+const edgeEls = {};
+for (const key in EDGES) { edgeEls[key] = s("path", { class: "edge", d: EDGES[key], "marker-end": "url(#arrow-base)" }); svg.append(edgeEls[key]); }
+const nodeEls = {};
+for (const id in NODES) {
+  const n = NODES[id];
+  const g = s("g", { class: "node", tabindex: "0", role: "button", "aria-label": `${n.t}: ${n.s}` }, [s("rect", { x: n.x, y: n.y, width: n.w, height: n.h, rx: 12 })]);
+  const t = s("text", { class: "t", x: n.x + 16, y: n.y + n.h / 2 - 3 }); t.textContent = n.t;
+  const sub = s("text", { class: "s", x: n.x + 16, y: n.y + n.h / 2 + 17 }); sub.textContent = n.s;
+  g.append(t, sub);
+  g.addEventListener("click", () => selectNode(id));
+  g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectNode(id); } });
+  svg.append(g); nodeEls[id] = g;
+}
+document.getElementById("map").append(svg);
+
+// ---- State ----
+const state = { path: 0, step: 0, node: null };
+const pathsBox = document.getElementById("paths"), stepsBox = document.getElementById("steps"), partBox = document.getElementById("part");
+PATHS.forEach((p, i) => pathsBox.append(el("button", { type: "button", textContent: p.name, onclick: () => { state.path = i; state.step = 0; state.node = null; render(); } })));
+function selectNode(id) { state.node = id; render(); }
+function goTo(step) { state.step = step; state.node = null; render(); }
+
+function render() {
+  const path = PATHS[state.path], step = path.steps[state.step];
+  [...pathsBox.children].forEach((b, i) => b.setAttribute("aria-pressed", String(i === state.path)));
+
+  const onPath = new Set(path.steps.flatMap((st) => st.e)), now = new Set(step.e);
+  const nodesOn = new Set(path.steps.flatMap((st) => [st.f, ...st.e.flatMap((k) => k.split(">"))]));
+  for (const key in edgeEls) {
+    edgeEls[key].setAttribute("class", "edge" + (now.has(key) ? " now" : onPath.has(key) ? " onpath" : " dim"));
+    edgeEls[key].setAttribute("marker-end", onPath.has(key) ? "url(#arrow-path)" : "url(#arrow-base)");
+  }
+  const focus = state.node || step.f;
+  for (const id in nodeEls) nodeEls[id].setAttribute("class", "node" + (id === focus ? " now" : nodesOn.has(id) ? " onpath" : " dim"));
+
+  document.getElementById("path-name").textContent = path.name;
+  document.getElementById("path-result").textContent = path.result;
+  stepsBox.replaceChildren(...path.steps.map((st, i) => {
+    const button = el("button", { type: "button", onclick: () => goTo(i) }, [el("span", { className: "num", textContent: i + 1 }), el("span", { textContent: st.t })]);
+    if (i === state.step && !state.node) button.setAttribute("aria-current", "step");
+    return el("li", {}, [button]);
+  }));
+
+  const part = NODES[focus];
+  partBox.replaceChildren(
+    el("p", { className: "kicker", textContent: part.s }),
+    el("h2", { textContent: part.t }),
+    el("p", { className: "part-text", textContent: part.text }),
+    el("p", { className: "fact", textContent: part.fact }),
+  );
+}
+
+document.getElementById("prev").onclick = () => goTo((state.step - 1 + PATHS[state.path].steps.length) % PATHS[state.path].steps.length);
+document.getElementById("next").onclick = () => goTo((state.step + 1) % PATHS[state.path].steps.length);
+render();
+</script>
+</body>
+</html>

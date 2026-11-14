@@ -119,6 +119,59 @@ pub fn redact(text: &str) -> Redacted {
     Redacted { text, found }
 }
 
+pub const CANNOT_CONFIRM: &str = "I can't confirm that. Please check with your cane or ask someone nearby.";
+pub const LABEL_REMINDER: &str = "Please check the label before taking anything.";
+const MAX_REPLY_CHARS: usize = 400;
+
+/// Sentences that claim something is safe or clear. The system cannot know that.
+static UNSAFE_CLAIMS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    patterns(&[
+        r"\b(?:it'?s|it is|that'?s|that is|you'?re|you are|everything(?:'s| is)|all is|you'?ll be|you will be)\s+(?:completely |totally |perfectly |now |all |quite )?(?:safe|clear|fine to (?:walk|go|cross|move))\b",
+        r"\bsafe to (?:walk|go|cross|move|proceed|step|continue|use|touch|climb)\b",
+        r"\b(?:the |your )?(?:path|way|route|floor|hall|hallway|corridor|stairs?|steps|road|street|crossing)\s+(?:is|are|looks|seems|should be)\s+(?:now |completely |totally )?(?:clear|safe|free|open|dry|fine)\b",
+        r"\b(?:all clear|no (?:obstacles|hazards|danger|risk)|nothing (?:is )?in (?:the|your) way|you can walk freely|nothing to worry about|no need to worry)\b",
+        r"\b(?:don'?t|do not|no need to) (?:worry|use your cane|be careful|check)\b",
+    ])
+});
+static MEDICINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(?:medication|medications|medicine|meds|pills?|tablets?|capsules?|insulin|inhaler|prescription|dose|doses|dosage|mg|ml|eye drops)\b").expect("valid pattern"));
+/// Advice about taking something, as opposed to where it is.
+static DOSE_ADVICE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:you should|you can|you may|it'?s (?:ok|okay|fine|safe) to|go ahead and|remember to|time to)\s+take\b|\btake\s+(?:\d+|one|two|three|four|a|an|half|another)\b|\b\d+(?:\.\d+)?\s?(?:mg|ml|mcg|units?)\b|\b(?:double|skip|extra)\s+(?:dose|pill|tablet)\b")
+        .expect("valid pattern")
+});
+static SENTENCE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^.!?]+[.!?]*").expect("valid pattern"));
+
+pub fn is_medication(topic: &str, text: &str) -> bool {
+    topic == "medication" || MEDICINE.is_match(text)
+}
+
+/// The rules for anything about to be spoken (backend/guardrails/speech.js).
+/// For a blind person the spoken reply is the whole interface, so whatever a
+/// model wrote: never say something is safe or clear, never give advice about
+/// taking medicine, and keep it short.
+pub fn spoken(text: &str, medication: bool) -> String {
+    let kept: Vec<&str> = SENTENCE
+        .find_iter(text)
+        .map(|m| m.as_str().trim())
+        .filter(|sentence| !sentence.is_empty())
+        .filter(|sentence| !UNSAFE_CLAIMS.iter().any(|claim| claim.is_match(sentence)))
+        .filter(|sentence| !(medication && DOSE_ADVICE.is_match(sentence)))
+        .collect();
+    if kept.is_empty() {
+        return CANNOT_CONFIRM.to_string();
+    }
+    let mut reply = kept.join(" ");
+    if medication {
+        reply = format!("{reply} {LABEL_REMINDER}");
+    }
+    if reply.chars().count() > MAX_REPLY_CHARS {
+        let cut: String = reply.chars().take(MAX_REPLY_CHARS - 3).collect();
+        reply = format!("{}...", cut.rsplit_once(char::is_whitespace).map_or(cut.as_str(), |(head, _)| head));
+    }
+    reply
+}
+
 /// Spots a spoken claim to be someone else, such as "I'm the resident". It
 /// never changes access; it is only noted in the audit entry.
 pub fn identity_claim(text: &str, space: &Space) -> Option<String> {
@@ -180,6 +233,18 @@ mod tests {
             assert_eq!(r.text, text);
             assert!(r.found.is_empty());
         }
+    }
+
+    #[test]
+    fn spoken_replies_never_claim_safety_or_give_dose_advice() {
+        assert_eq!(spoken("The stairs are at your two o'clock. The path is clear.", false), "The stairs are at your two o'clock.");
+        assert_eq!(spoken("It's safe to walk ahead.", false), CANNOT_CONFIRM);
+        assert_eq!(spoken("Your pills are in the top cupboard. You should take two with water.", true), format!("Your pills are in the top cupboard. {LABEL_REMINDER}"));
+        // Ordinary directions pass through unchanged.
+        let directions = "You are facing a closed door about two steps ahead. A small wall sign is to the right of the door.";
+        assert_eq!(spoken(directions, false), directions);
+        assert!(spoken(&"word ".repeat(200), false).chars().count() <= 400);
+        assert!(is_medication("medication", "") && is_medication("other", "the insulin pen") && !is_medication("house_guide", "the kettle"));
     }
 
     #[test]

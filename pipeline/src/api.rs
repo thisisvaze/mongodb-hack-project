@@ -3,7 +3,9 @@
 //! already use the contract's field names, so mapping is mostly `_id` -> `id`
 //! and dates -> ISO strings.
 
-use std::{collections::HashSet, convert::Infallible, sync::atomic::Ordering::Relaxed, sync::Arc, time::Duration};
+use std::{collections::HashSet, convert::Infallible, net::IpAddr, sync::atomic::Ordering::Relaxed, sync::Arc, time::Duration};
+
+use anyhow::Context;
 
 use axum::{
     body::Bytes,
@@ -158,7 +160,7 @@ fn role_in<'a>(space: &'a Space, user_id: &str) -> Result<&'a str, ApiError> {
     space.role_of(user_id).ok_or_else(|| not_found(format!("unknown user_id '{user_id}'")))
 }
 
-pub async fn state(State(app): State<Arc<App>>, Query(q): Query<SpaceQuery>) -> Result<Json<Value>, ApiError> {
+pub async fn state(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<SpaceQuery>) -> Result<Json<Value>, ApiError> {
     let space = load_space(&app, &q.space_id).await?;
     let (memories, audit) = tokio::try_join!(app.store.list_memories(&q.space_id), app.store.list_audit(&q.space_id))?;
     Ok(Json(json!({
@@ -167,6 +169,8 @@ pub async fn state(State(app): State<Arc<App>>, Query(q): Query<SpaceQuery>) -> 
         "rules": space.rules,
         "memories": memories.iter().filter(|m| q.views || !is_view(m)).map(memory_json).collect::<Vec<_>>(),
         "audit": audit.iter().map(audit_json).collect::<Vec<_>>(),
+        "frames": app.frames_in(&q.space_id, &public_base(&app, &headers)).await,
+        "latest_turn": app.latest_turns.lock().unwrap().get(&q.space_id).cloned(),
     })))
 }
 
@@ -195,17 +199,66 @@ pub async fn put_rules(State(app): State<Arc<App>>, Query(q): Query<SpaceQuery>,
 
 // --- Images ------------------------------------------------------------------
 
+/// True for any address the server must never connect to on a client's behalf:
+/// private, loopback, link-local (including cloud metadata) and reserved ranges.
+pub fn is_blocked_address(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() || v4.is_broadcast() || v4.is_documentation() || v4.is_multicast()
+                || o[0] == 0
+                || (o[0] == 100 && (o[1] & 0xC0) == 64) // carrier-grade NAT
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                || (o[0] == 198 && (o[1] & 0xFE) == 18) // benchmarking
+                || o[0] >= 240
+        }
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_blocked_address(IpAddr::V4(v4)),
+            None => {
+                let first = v6.segments()[0];
+                v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || (first & 0xFE00) == 0xFC00 || (first & 0xFFC0) == 0xFE80
+            }
+        },
+    }
+}
+
+/// The client chooses the photo link, so it is checked before anything is
+/// fetched (backend/guardrails/fetch.js): https only, default port, no
+/// credentials, and a host that does not resolve to an internal address.
+/// Unlike the JavaScript version, the connection is not pinned to the address
+/// that was checked, and hosts in redirects are only checked when written as IPs.
+async fn check_image_url(app: &App, raw: &str) -> anyhow::Result<reqwest::Url> {
+    let url = reqwest::Url::parse(raw).context("image_url is not a valid address")?;
+    let local = app.cfg.allow_local_image_urls;
+    anyhow::ensure!(url.scheme() == "https" || (local && url.scheme() == "http"), "image_url must use https");
+    anyhow::ensure!(url.username().is_empty() && url.password().is_none(), "image_url must not contain a user name or password");
+    let host = url.host_str().context("image_url has no host")?.trim_matches(['[', ']']).to_string();
+    if !local {
+        anyhow::ensure!(url.port().is_none(), "image_url must use the default port");
+        let addresses: Vec<_> = tokio::net::lookup_host((host.as_str(), 443)).await.context("the image_url host could not be found")?.collect();
+        anyhow::ensure!(!addresses.is_empty() && !addresses.iter().any(|a| is_blocked_address(a.ip())), "image_url points to an internal address");
+    }
+    Ok(url)
+}
+
 /// A JPEG sent inline, or fetched from the glasses' short-lived signed link.
 async fn load_image(app: &App, image_b64: Option<String>, image_url: Option<String>) -> anyhow::Result<Option<Bytes>> {
     if let Some(b64) = image_b64.filter(|s| !s.is_empty()) {
         let data = b64.rsplit(',').next().unwrap_or(&b64); // tolerate a data: prefix
         return Ok(Some(Bytes::from(B64.decode(data.trim())?)));
     }
-    if let Some(url) = image_url.filter(|s| s.starts_with("https://") || s.starts_with("http://")) {
-        let response = app.http.get(&url).timeout(Duration::from_secs(10)).send().await?.error_for_status()?;
-        let bytes = response.bytes().await?;
-        anyhow::ensure!(bytes.len() <= MAX_FRAME_BYTES, "the image is larger than {MAX_FRAME_BYTES} bytes");
-        return Ok(Some(bytes));
+    if let Some(raw) = image_url.filter(|s| !s.trim().is_empty()) {
+        let url = check_image_url(app, raw.trim()).await?;
+        let mut response = app.http.get(url).send().await?.error_for_status()?;
+        anyhow::ensure!(response.content_length().is_none_or(|n| n <= MAX_FRAME_BYTES as u64), "the image is larger than {MAX_FRAME_BYTES} bytes");
+        // Read in pieces, so a server that lies about the size cannot fill memory.
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            bytes.extend_from_slice(&chunk);
+            anyhow::ensure!(bytes.len() <= MAX_FRAME_BYTES, "the image is larger than {MAX_FRAME_BYTES} bytes");
+        }
+        anyhow::ensure!(bytes.starts_with(&[0xFF, 0xD8, 0xFF]) || bytes.starts_with(b"\x89PNG"), "the link did not return a JPEG or PNG image");
+        return Ok(Some(Bytes::from(bytes)));
     }
     Ok(None)
 }
@@ -327,7 +380,7 @@ async fn guide(app: &App, space_id: &str, user_id: &str, scope: &Scope, frame: &
     app.stats.guides.fetch_add(1, Relaxed);
     app.stats.guide_ms.fetch_add(ms, Relaxed);
     Ok(json!({
-        "say": (!spoken.is_empty()).then(|| spoken.join(" ")),
+        "say": (!spoken.is_empty()).then(|| guard::spoken(&spoken.join(" "), false)),
         "matches": hits.iter().map(|m| json!({
             "id": id_string(m.get("_id")),
             "item": m.get_str("item").ok(),
@@ -463,6 +516,7 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
 
     let kind = intent(&text);
     let scope = space.scope_for(&body.user_id);
+    let turn_image = frame.as_ref().map(|f| crate::frame_json(&public_base(&app, &headers), &body.user_id, f)["image_url"].clone());
     let mut response = match kind {
         Intent::Nothing => reply("ignored", "", vec![]),
         Intent::Forget => forget(&app, &body.space_id, &body.user_id, name, &safe).await?,
@@ -471,6 +525,17 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
     };
     response["heard_text"] = json!(safe);
     response["input_used"] = json!("text");
+    // The dashboard shows the latest turn as it happens, and again when it reloads.
+    let live = json!({
+        "user_id": body.user_id,
+        "ts": DateTime::now().try_to_rfc3339_string().unwrap_or_default(),
+        "transcript": safe,
+        "kind": response["kind"],
+        "reply_text": response["reply_text"],
+        "image_url": turn_image,
+    });
+    app.latest_turns.lock().unwrap().insert(body.space_id.clone(), live.clone());
+    app.emit(&body.space_id, "turn", live);
     tracing::info!(user = %body.user_id, intent = ?kind, kind = response["kind"].as_str().unwrap_or(""), ms = started.elapsed().as_millis() as u64, "turn");
     Ok(Json(response))
 }
@@ -571,9 +636,13 @@ async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &
         if answer.found && !answer.reply.trim().is_empty() {
             let offered: HashSet<String> = hits.iter().chain(here.iter()).filter_map(|m| id_string(m.get("_id"))).collect();
             let used: Vec<String> = answer.memory_ids.into_iter().filter(|id| offered.contains(id)).collect();
+            // Whatever the model wrote, the spoken rules apply: no claims that
+            // something is safe, and for medicine only where it is, never how to take it.
+            let medication = hits.iter().any(|m| guard::is_medication(m.get_str("topic").unwrap_or_default(), m.get_str("item").unwrap_or_default())) || guard::is_medication("", text);
+            let said = guard::spoken(answer.reply.trim(), medication);
             let detail = format!("Asked \"{text}\". Answered from {} memor{} visible to role {role}.{claim}", used.len(), if used.len() == 1 { "y" } else { "ies" });
             app.store.insert_audit(audit_event(space_id, user_id, "query_answered", "allowed", detail, used.clone(), Some(text))).await?;
-            return Ok(reply("answer", answer.reply.trim(), used));
+            return Ok(reply("answer", said, used));
         }
     }
 
@@ -726,6 +795,16 @@ mod tests {
         assert_eq!(intent("The floor is wet?"), Intent::Question);
         assert_eq!(intent("Forget my keys"), Intent::Forget);
         assert_eq!(intent("   "), Intent::Nothing);
+    }
+
+    #[test]
+    fn internal_addresses_are_never_fetched() {
+        for blocked in ["127.0.0.1", "10.1.2.3", "192.168.1.20", "172.16.0.9", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fe80::1", "fd00::1", "::ffff:10.0.0.1"] {
+            assert!(is_blocked_address(blocked.parse().unwrap()), "{blocked} must be blocked");
+        }
+        for public in ["8.8.8.8", "151.101.1.69", "2606:4700:4700::1111"] {
+            assert!(!is_blocked_address(public.parse().unwrap()), "{public} must be allowed");
+        }
     }
 
     #[test]

@@ -72,6 +72,8 @@ pub struct Config {
     index_live_frames: bool,
     /// The address clients reach this server at, for links in events. Taken from the request when not set.
     pub public_base: Option<String>,
+    /// True only for local testing: photo links may then use http and point at this machine.
+    pub allow_local_image_urls: bool,
     /// The built web app (frontend/web/dist). When present, this server also serves the dashboard.
     web_dir: Option<std::path::PathBuf>,
 }
@@ -124,6 +126,7 @@ impl Config {
             guide_repeat_ms: env_num("GUIDE_REPEAT_SECS", 30_u64) * 1000,
             index_live_frames: env_or("INDEX_LIVE_FRAMES", "true") != "false",
             public_base: env_opt("PUBLIC_BASE"),
+            allow_local_image_urls: env_or("ALLOW_LOCAL_IMAGE_URLS", "false") == "true",
             web_dir: Some(std::path::PathBuf::from(env_or("WEB_DIR", "../frontend/web/dist"))).filter(|dir| dir.join("index.html").is_file()),
         })
     }
@@ -229,6 +232,8 @@ pub struct App {
     pub http: reqwest::Client,
     /// The live feed: everything sent here reaches the dashboards listening on /api/events.
     pub events: broadcast::Sender<api::BusEvent>,
+    /// The most recent turn in each space, for a dashboard that has just loaded.
+    pub latest_turns: std::sync::Mutex<HashMap<String, Value>>,
     sessions: Mutex<HashMap<String, Session>>,
 }
 
@@ -256,9 +261,14 @@ impl App {
             session.enter(venue_id, session_id);
             session.latest = Some(frame.clone());
         }
-        let ts = mongodb::bson::DateTime::from_millis(frame.at_ms as i64).try_to_rfc3339_string().unwrap_or_default();
-        self.emit(venue_id, "frame", json!({ "user_id": user_id, "ts": ts, "image_url": format!("{base}/api/frame/latest?user_id={user_id}&t={}", frame.at_ms) }));
+        self.emit(venue_id, "frame", frame_json(base, user_id, &frame));
         Ok(frame)
+    }
+
+    /// The latest frame of each user currently in a space, as the contract's frame objects.
+    pub async fn frames_in(&self, space_id: &str, base: &str) -> Vec<Value> {
+        let sessions = self.sessions.lock().await;
+        sessions.iter().filter(|(_, s)| s.venue_id == space_id).filter_map(|(user_id, s)| s.latest.as_ref().map(|frame| frame_json(base, user_id, frame))).collect()
     }
 
     /// True if live guidance may speak this thing to this user now; false if
@@ -328,7 +338,29 @@ pub async fn build_app(cfg: Config) -> anyhow::Result<Arc<App>> {
         (None, _) => None,
     };
     let (events, _) = broadcast::channel(256);
-    Ok(Arc::new(App { stats: Stats::default(), embedder, gemini, store, http: reqwest::Client::builder().user_agent("safespace-pipeline/0.1").build()?, events, sessions: Mutex::default(), cfg }))
+    // Photo links are chosen by the client, so the download is boxed in: a
+    // short time limit, at most 3 redirects, https only, and never to an
+    // address written as an internal IP.
+    let http = reqwest::Client::builder()
+        .user_agent("safespace-pipeline/0.1")
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            let url = attempt.url();
+            let internal = url.host_str().and_then(|h| h.trim_matches(['[', ']']).parse::<std::net::IpAddr>().ok()).is_some_and(api::is_blocked_address);
+            if attempt.previous().len() > 3 || url.scheme() != "https" || internal {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
+        .build()?;
+    Ok(Arc::new(App { stats: Stats::default(), embedder, gemini, store, http, events, latest_turns: Default::default(), sessions: Mutex::default(), cfg }))
+}
+
+/// A frame as the contract describes it. The link points at this server's own copy.
+pub fn frame_json(base: &str, user_id: &str, frame: &Frame) -> Value {
+    let ts = mongodb::bson::DateTime::from_millis(frame.at_ms as i64).try_to_rfc3339_string().unwrap_or_default();
+    json!({ "user_id": user_id, "ts": ts, "image_url": format!("{base}/api/frame/latest?user_id={user_id}&t={}", frame.at_ms) })
 }
 
 pub fn now_ms() -> u64 {
