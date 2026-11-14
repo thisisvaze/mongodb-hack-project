@@ -198,8 +198,14 @@ impl Store {
     }
 
     /// Every memory in a space, newest first, without the vectors. For the dashboard.
-    pub async fn list_memories(&self, space_id: &str) -> anyhow::Result<Vec<Document>> {
-        let cursor = self.memories.find(doc! { "space_id": space_id }).projection(doc! { NO_VECTOR: 0 }).sort(doc! { "created_at": -1 }).limit(300).await;
+    /// Stored views (one per indexed frame, each with a picture) are only
+    /// fetched when asked for, so the dashboard loads quickly.
+    pub async fn list_memories(&self, space_id: &str, with_views: bool) -> anyhow::Result<Vec<Document>> {
+        let mut filter = doc! { "space_id": space_id };
+        if !with_views {
+            filter.insert("item_key", doc! { "$not": { "$regex": "^view_" } });
+        }
+        let cursor = self.memories.find(filter).projection(doc! { NO_VECTOR: 0 }).sort(doc! { "created_at": -1 }).limit(300).await;
         collect(cursor.context("listing memories")?).await
     }
 

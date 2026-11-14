@@ -162,12 +162,12 @@ fn role_in<'a>(space: &'a Space, user_id: &str) -> Result<&'a str, ApiError> {
 
 pub async fn state(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<SpaceQuery>) -> Result<Json<Value>, ApiError> {
     let space = load_space(&app, &q.space_id).await?;
-    let (memories, audit) = tokio::try_join!(app.store.list_memories(&q.space_id), app.store.list_audit(&q.space_id))?;
+    let (memories, audit) = tokio::try_join!(app.store.list_memories(&q.space_id, q.views), app.store.list_audit(&q.space_id))?;
     Ok(Json(json!({
         "space_id": q.space_id,
         "users": space.members,
         "rules": space.rules,
-        "memories": memories.iter().filter(|m| q.views || !is_view(m)).map(memory_json).collect::<Vec<_>>(),
+        "memories": memories.iter().map(memory_json).collect::<Vec<_>>(),
         "audit": audit.iter().map(audit_json).collect::<Vec<_>>(),
         "frames": app.frames_in(&q.space_id, &public_base(&app, &headers)).await,
         "latest_turn": app.latest_turns.lock().unwrap().get(&q.space_id).cloned(),
@@ -671,7 +671,7 @@ async fn forget(app: &App, space_id: &str, user_id: &str, name: &str, text: &str
     let matched: Vec<&Document> = own.iter().filter(|m| names_item(&asked, m)).collect();
     if matched.is_empty() {
         // Only the owner can forget a memory.
-        let all = app.store.list_memories(space_id).await?;
+        let all = app.store.list_memories(space_id, false).await?;
         let others: Vec<&Document> = all.iter().filter(|m| m.get_str("status") == Ok("active") && m.get_str("owner_id") != Ok(user_id) && names_item(&asked, m)).collect();
         return Ok(match others.first() {
             Some(first) => {
