@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Spatial Recall — System Diagram</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #131a26;
+    --panel-2: #182232;
+    --border: #273449;
+    --text: #eef2f8;
+    --muted: #94a3b8;
+    --green: #22c55e;
+    --green-bg: rgba(34, 197, 94, 0.12);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245, 158, 11, 0.12);
+    --red: #ef4444;
+    --red-bg: rgba(239, 68, 68, 0.12);
+    --blue: #38bdf8;
+    --blue-bg: rgba(56, 189, 248, 0.12);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    min-height: 100vh;
+    padding: 32px 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 22px;
+  }
+  header {
+    width: 100%;
+    max-width: 1180px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 4px;
+  }
+  .tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .tab {
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 13px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  }
+  .tab:hover { color: var(--text); border-color: #3d5170; }
+  .tab.active {
+    color: var(--text);
+    background: var(--panel-2);
+    border-color: var(--blue);
+  }
+
+  .board {
+    width: 100%;
+    max-width: 1180px;
+    display: grid;
+    grid-template-columns: 1fr 64px 1.25fr 64px 1fr;
+    align-items: stretch;
+    gap: 0;
+  }
+  .col {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .col-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 600;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: opacity 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .card p {
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+  .pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill.green { color: var(--green); background: var(--green-bg); border: 1px solid rgba(34,197,94,0.35); }
+  .pill.amber { color: var(--amber); background: var(--amber-bg); border: 1px solid rgba(245,158,11,0.35); }
+  .pill.red   { color: var(--red);   background: var(--red-bg);   border: 1px solid rgba(239,68,68,0.35); }
+  .pill.blue  { color: var(--blue);  background: var(--blue-bg);  border: 1px solid rgba(56,189,248,0.35); }
+
+  .arrow-col {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    align-items: center;
+    padding: 36px 4px;
+    gap: 18px;
+  }
+  .flow-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+    transition: opacity 0.18s ease, color 0.18s ease;
+  }
+  .flow-arrow svg { width: 44px; height: 20px; stroke: currentColor; }
+
+  .dim { opacity: 0.24; }
+  .hi-blue  { border-color: var(--blue) !important; }
+  .hi-green { border-color: var(--green) !important; }
+  .hi-amber { border-color: var(--amber) !important; }
+  .hi-red   { border-color: var(--red) !important; }
+
+  .caption-bar {
+    width: 100%;
+    max-width: 1180px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 14px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .caption-bar span.tag {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--blue);
+    background: var(--blue-bg);
+    padding: 3px 9px;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  @media (max-width: 960px) {
+    .board { grid-template-columns: 1fr; gap: 14px; }
+    .arrow-col { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Spatial Recall — Multi-Agent Smart Glasses Memory</h1>
+    <div class="sub">Many glasses stream video + mic into one governed MongoDB Atlas brain, and query it back in &lt;1s via ElevenLabs.</div>
+  </div>
+  <div class="tabs" role="tablist" aria-label="Flow selector">
+    <button class="tab active" data-mode="all">All Flows</button>
+    <button class="tab" data-mode="ingest">1. Stream In (Camera + Mic)</button>
+    <button class="tab" data-mode="shared">2. User B Queries Public Map</button>
+    <button class="tab" data-mode="blocked">3. Blocked Private Query</button>
+  </div>
+</header>
+
+<div class="board">
+  <!-- COLUMN 1: GLASSES AGENTS -->
+  <section class="col" aria-label="Smart Glasses Agents">
+    <div class="col-title">1 · Smart-Glasses Agents (Inputs)</div>
+
+    <div class="card" id="c-agent-a">
+      <div class="card-head">
+        <span>🕶️ Agent A — User A's Glasses</span>
+        <span class="pill blue">Mentra Live</span>
+      </div>
+      <p><strong>Streams video + mic</strong> as User A walks:<br/>
+      • Sees exit door &amp; water cooler<br/>
+      • Says: <em>"Wallet by laptop; keys in hoodie pocket"</em></p>
+    </div>
+
+    <div class="card" id="c-agent-b">
+      <div class="card-head">
+        <span>🕶️ Agent B — User B's Glasses</span>
+        <span class="pill blue">2nd User / Phone</span>
+      </div>
+      <p>Walks into the <strong>same building later</strong> with zero prior scan:<br/>
+      • Asks: <em>"Guide me to the water cooler"</em><br/>
+      • Asks: <em>"Where is User A's wallet?"</em></p>
+    </div>
+
+    <div class="card" id="c-gate">
+      <div class="card-head">
+        <span>⚡ Ingest &amp; Policy Gate</span>
+        <span class="pill blue">Gemini 4 + Voyage 3.5</span>
+      </div>
+      <p>Skips unchanged frames, extracts <strong>touchable landmarks</strong>, embeds video+speech (<code>1024-d</code>), and splits Public vs. Private.</p>
+    </div>
+  </section>
+
+  <!-- ARROWS 1 -> 2 -->
+  <div class="arrow-col" aria-hidden="true">
+    <div class="flow-arrow" id="a-write">
+      <span>Write</span>
+      <svg viewBox="0 0 44 20" fill="none"><path d="M2 10h38m0 0l-6-6m6 6l-6 6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="flow-arrow" id="a-query">
+      <span>$vectorSearch</span>
+      <svg viewBox="0 0 44 20" fill="none"><path d="M40 7H4m0 0l5-5M4 7l5 5M4 14h36m0 0l-5-5m5 5l-5 5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+  </div>
+
+  <!-- COLUMN 2: MONGODB ATLAS -->
+  <section class="col" aria-label="MongoDB Atlas Sandbox">
+    <div class="col-title">2 · MongoDB Atlas Brain (1 Shared Cluster)</div>
+
+    <div class="card" id="c-public">
+      <div class="card-head">
+        <span>🟢 Public Venue Layer ("Waze Indoors")</span>
+        <span class="pill green">visibility: public</span>
+      </div>
+      <p>Doors, stairs, outlets, counters, temporary hazards.<br/>
+      <strong>Readable by ALL blind users</strong> in this venue + pushed live via <code>watch()</code>.</p>
+    </div>
+
+    <div class="card" id="c-private">
+      <div class="card-head">
+        <span>🔒 Private Personal Layer</span>
+        <span class="pill amber">owner_id locked</span>
+      </div>
+      <p>Wallet, meds, passport, <em>"keys in left pocket"</em>.<br/>
+      • Moved items flip old spot → <code>superseded</code><br/>
+      • Hotel check-in auto-deletes at checkout (<code>TTL</code>)</p>
+    </div>
+
+    <div class="card" id="c-audit">
+      <div class="card-head">
+        <span>🛡️ Immutable Audit Log (Track 1)</span>
+        <span class="pill red">audit_events</span>
+      </div>
+      <p>Records every public promotion, voice <em>"Forget"</em> wipe, and logs <strong>🛑 DENIED</strong> if User B asks for User A's private items.</p>
+    </div>
+  </section>
+
+  <!-- ARROWS 2 -> 3 -->
+  <div class="arrow-col" aria-hidden="true">
+    <div class="flow-arrow" id="a-tts">
+      <span>&lt;1s Voice</span>
+      <svg viewBox="0 0 44 20" fill="none"><path d="M2 10h38m0 0l-6-6m6 6l-6 6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="flow-arrow" id="a-sse">
+      <span>watch() SSE</span>
+      <svg viewBox="0 0 44 20" fill="none"><path d="M2 10h38m0 0l-6-6m6 6l-6 6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+  </div>
+
+  <!-- COLUMN 3: OUTPUTS -->
+  <section class="col" aria-label="Outputs and Judge View">
+    <div class="col-title">3 · Live Guidance &amp; Judge Screen (Outputs)</div>
+
+    <div class="card" id="c-voice">
+      <div class="card-head">
+        <span>🔊 ElevenLabs Step-by-Step Guide</span>
+        <span class="pill green">&lt;1.0s Flash TTS</span>
+      </div>
+      <p>1. Coarse memory cue: <em>"Turn right toward desk"</em><br/>
+      2. 1-fps live camera homing: <em>"11 o'clock… 6 inches"</em><br/>
+      3. Auto-marks DB <code>missing</code> if item moved!</p>
+    </div>
+
+    <div class="card" id="c-judge">
+      <div class="card-head">
+        <span>🖥️ Judge Control Room UI</span>
+        <span class="pill blue">Projector Screen</span>
+      </div>
+      <p>Shows live glasses POV, <code>🟢 Public</code> vs <code>🔒 Private</code> cards popping in, crossed-out <code>SUPERSEDED</code> moves, and flashing <code>🛑 DENIED</code> blocks.</p>
+    </div>
+  </section>
+</div>
+
+<div class="caption-bar" id="caption">
+  <span class="tag">Overview</span>
+  <span id="caption-text">Click the 3 flow buttons top-right to trace how Writing, Shared "Waze" Recall, and Private Blocking move through the system.</span>
+</div>
+
+<script>
+  const modes = {
+    all: {
+      active: ["c-agent-a","c-agent-b","c-gate","c-public","c-private","c-audit","c-voice","c-judge","a-write","a-query","a-tts","a-sse"],
+      hi: {},
+      tag: "Overview",
+      text: "Click the 3 flow buttons top-right to trace how Writing, Shared 'Waze' Recall, and Private Blocking move through the system."
+    },
+    ingest: {
+      active: ["c-agent-a","c-gate","c-public","c-private","c-audit","c-judge","a-write","a-sse"],
+      hi: { "c-agent-a": "hi-blue", "c-gate": "hi-blue", "c-public": "hi-green", "c-private": "hi-amber", "c-judge": "hi-blue" },
+      tag: "Flow 1 · Stream In",
+      text: "Agent A streams video + mic → Gemini 4 & Voyage 3.5 embed & split it: 'water cooler' goes to 🟢 Public Venue, while 'wallet' & 'keys in pocket' lock to 🔒 Private (User A)."
+    },
+    shared: {
+      active: ["c-agent-b","c-public","c-voice","c-judge","a-query","a-tts"],
+      hi: { "c-agent-b": "hi-blue", "c-public": "hi-green", "c-voice": "hi-green" },
+      tag: "Flow 2 · 'Waze Indoors'",
+      text: "Agent B enters the room cold and asks 'Guide me to the water cooler' → $vectorSearch reads Agent A's 🟢 Public memory in ~30ms → ElevenLabs guides Agent B step-by-step."
+    },
+    blocked: {
+      active: ["c-agent-b","c-private","c-audit","c-voice","c-judge","a-query","a-sse"],
+      hi: { "c-agent-b": "hi-blue", "c-private": "hi-amber", "c-audit": "hi-red", "c-judge": "hi-red" },
+      tag: "Flow 3 · Zero-Leak Block",
+      text: "Agent B asks 'Where is User A's wallet?' → $vectorSearch pre-filter excludes User A's 🔒 Private records → Audit Log flashes 🛑 DENIED live on the Judge Dashboard."
+    }
+  };
+
+  const allIds = ["c-agent-a","c-agent-b","c-gate","c-public","c-private","c-audit","c-voice","c-judge","a-write","a-query","a-tts","a-sse"];
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const m = modes[btn.dataset.mode];
+      allIds.forEach(id => {
+        const el = document.getElementById(id);
+        el.classList.remove("dim","hi-blue","hi-green","hi-amber","hi-red");
+        if (!m.active.includes(id)) el.classList.add("dim");
+        if (m.hi[id]) el.classList.add(m.hi[id]);
+      });
+      document.querySelector("#caption .tag").textContent = m.tag;
+      document.getElementById("caption-text").textContent = m.text;
+    });
+  });
+</script>
+</body>
+</html>
