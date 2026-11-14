@@ -292,13 +292,19 @@ pub struct FrameBody {
 /// searched straight away for what is already remembered about this view, and
 /// goes through the change gate to be indexed in the background.
 pub async fn frames(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): Json<FrameBody>) -> Result<Json<Value>, ApiError> {
+    let clock = std::time::Instant::now();
     let space = load_space(&app, &body.space_id).await?;
     role_in(&space, &body.user_id)?;
+    let space_ms = clock.elapsed().as_millis() as u64;
+    let by_link = body.image_url.as_deref().is_some_and(|u| !u.is_empty());
     let jpeg = load_image(&app, body.image_b64, body.image_url)
         .await
         .map_err(|e| bad_request(format!("could not read the image: {e:#}")))?
         .ok_or_else(|| bad_request("image_b64 or image_url is required"))?;
+    let image_ms = clock.elapsed().as_millis() as u64 - space_ms;
+    let image_kb = jpeg.len() / 1024;
     let frame = app.accept_frame(&body.user_id, &body.space_id, jpeg, None, None, &public_base(&app, &headers)).await.map_err(bad_request)?;
+    let decode_ms = clock.elapsed().as_millis() as u64 - space_ms - image_ms;
 
     if body.index {
         app.mark_indexed(&body.user_id, &frame).await;
@@ -326,6 +332,12 @@ pub async fn frames(State(app): State<Arc<App>>, headers: HeaderMap, Json(body):
             if !guidance["say"].is_null() {
                 app.emit(&body.space_id, "guide", json!({ "user_id": body.user_id, "say": guidance["say"], "matches": guidance["matches"] }));
             }
+            // Where the time went for this frame, step by step.
+            tracing::info!(
+                user = %body.user_id, by_link, image_kb, space_ms, image_ms, decode_ms,
+                embed_ms = guidance["embed_ms"].as_u64().unwrap_or(0), search_ms = guidance["search_ms"].as_u64().unwrap_or(0),
+                total_ms = clock.elapsed().as_millis() as u64, "frame timing"
+            );
         }
         Err(e) => tracing::warn!(user = %body.user_id, "live guidance failed: {e:#}"),
     }
@@ -358,7 +370,9 @@ async fn nearest_view(app: &App, space_id: &str, user_id: &str, scope: &Scope, f
 async fn guide(app: &App, space_id: &str, user_id: &str, scope: &Scope, frame: &Frame) -> anyhow::Result<Value> {
     let started = std::time::Instant::now();
     let query = embed_frame(app, frame).await?;
+    let embed_ms = started.elapsed().as_millis() as u64;
     let mut hits = app.store.vector_search(space_id, user_id, scope, &query, 8).await?;
+    let search_ms = started.elapsed().as_millis() as u64 - embed_ms;
     hits.retain(|m| m.get_f64("score").unwrap_or(0.0) >= app.cfg.guide_min_score);
 
     let mut spoken = Vec::new();
@@ -399,6 +413,8 @@ async fn guide(app: &App, space_id: &str, user_id: &str, scope: &Scope, frame: &
             "score": m.get_f64("score").ok(),
         })).collect::<Vec<_>>(),
         "ms": ms,
+        "embed_ms": embed_ms,
+        "search_ms": search_ms,
     }))
 }
 
@@ -414,6 +430,10 @@ pub struct TurnBody {
     /// Recorded audio. This service has no speech-to-text, so it is only accepted alongside text.
     #[serde(default)]
     audio: Option<Value>,
+    /// True when this was overheard, not said after a button press. An
+    /// overheard turn is only answered if it uses the assistant's name.
+    #[serde(default)]
+    passive: bool,
     #[serde(default)]
     image_b64: Option<String>,
     #[serde(default)]
@@ -496,13 +516,18 @@ async fn english_only(app: &App, text: String) -> String {
 
 /// One spoken or typed turn: a note to remember, a question, or "forget ...".
 pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): Json<TurnBody>) -> Result<Json<Value>, ApiError> {
+    let clock = std::time::Instant::now();
     let space = load_space(&app, &body.space_id).await?;
     let role = role_in(&space, &body.user_id)?.to_string();
+    let space_ms = clock.elapsed().as_millis() as u64;
     let text = body.text.as_deref().unwrap_or_default().trim().to_string();
     if text.is_empty() && body.audio.as_ref().is_some_and(|a| !a.is_null()) {
         return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "audio-only turns are not supported: send the transcript in `text`".into()));
     }
     let text = english_only(&app, text).await;
+    // "Robin, what's this?": the name says the person is talking to the glasses. It is not part of the request.
+    let (addressed, text) = guard::strip_wake_word(&text, &app.cfg.wake_words);
+    let english_ms = clock.elapsed().as_millis() as u64 - space_ms;
 
     // The turn's picture also becomes the user's latest frame. A bad picture must not lose the words.
     let frame = match load_image(&app, body.image_b64, body.image_url).await {
@@ -520,6 +545,7 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
         }
     };
 
+    let image_ms = clock.elapsed().as_millis() as u64 - space_ms - english_ms;
     let started = std::time::Instant::now();
     // What was said is data, never an instruction: a turn that tries to give
     // the system orders is refused before anything is saved or looked up.
@@ -541,7 +567,14 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
         .unwrap_or_default();
     let name = space.members.iter().find(|m| m.id == body.user_id).map_or(body.user_id.as_str(), |m| m.name.as_str());
 
-    let kind = intent(&text);
+    // Overheard speech is listened to but never answered: a note about where
+    // something is gets remembered silently, and everything else is dropped.
+    let overheard = (body.passive || app.cfg.wake_word_required) && !addressed;
+    let kind = match overheard {
+        true if crate::gate::is_note(&text) => Intent::Note,
+        true => Intent::Nothing,
+        false => intent(&text),
+    };
     let scope = space.scope_for(&body.user_id);
     let turn_image = frame.as_ref().map(|f| crate::frame_json(&public_base(&app, &headers), &body.user_id, f)["image_url"].clone());
     let mut response = match kind {
@@ -550,6 +583,9 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
         Intent::Question => question(&app, &body.space_id, &body.user_id, &role, &scope, &safe, &claim, frame.as_ref()).await?,
         Intent::Note => note(&app, &body.space_id, &body.user_id, frame, text.clone()).await?,
     };
+    if overheard {
+        response["reply_text"] = json!("");
+    }
     response["heard_text"] = json!(safe);
     response["input_used"] = json!("text");
     // The dashboard shows the latest turn as it happens, and again when it reloads.
@@ -563,7 +599,10 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
     });
     app.latest_turns.lock().unwrap().insert(body.space_id.clone(), live.clone());
     app.emit(&body.space_id, "turn", live);
-    tracing::info!(user = %body.user_id, intent = ?kind, kind = response["kind"].as_str().unwrap_or(""), ms = started.elapsed().as_millis() as u64, "turn");
+    tracing::info!(
+        user = %body.user_id, intent = ?kind, kind = response["kind"].as_str().unwrap_or(""),
+        space_ms, english_ms, image_ms, handle_ms = started.elapsed().as_millis() as u64, total_ms = clock.elapsed().as_millis() as u64, "turn"
+    );
     Ok(Json(response))
 }
 
@@ -611,6 +650,17 @@ fn may_read(memory: &Document, user_id: &str, scope: &Scope) -> bool {
 async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &Scope, text: &str, claim: &str, frame: Option<&Frame>) -> Result<Value, ApiError> {
     let gemini = app.gemini.as_ref().ok_or_else(|| ApiError(StatusCode::SERVICE_UNAVAILABLE, "the answering model is not configured".into()))?;
 
+    // "What's this?" is about the view right now, not about a memory: the
+    // model looks at the photo that came with the question.
+    if let Some(frame) = frame.filter(|_| guard::asks_about_view(text)) {
+        let jpeg = frame.jpeg.clone();
+        let prepared = tokio::task::spawn_blocking(move || crate::gate::prepare(&jpeg)).await??;
+        let said = guard::spoken(&gemini.describe(&prepared.model_b64, text).await?, false);
+        let detail = format!("Asked \"{text}\". Described what was in view; no memory was used.{claim}");
+        app.store.insert_audit(audit_event(space_id, user_id, "query_answered", "allowed", detail, vec![], Some(text))).await?;
+        return Ok(reply("answer", said, vec![]));
+    }
+
     // Step A: search only what this person may see. With a picture, also find
     // where they are standing, so the answer can give directions from there.
     let search_text = async {
@@ -624,7 +674,9 @@ async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &
             None => Ok(None),
         }
     };
+    let clock = std::time::Instant::now();
     let (hits, here) = tokio::join!(search_text, locate);
+    let search_ms = clock.elapsed().as_millis() as u64;
     // Things answer "where is it"; views are kept for "where am I".
     let mut hits = hits?;
     let returned = hits.len();
@@ -660,6 +712,7 @@ async fn question(app: &App, space_id: &str, user_id: &str, role: &str, scope: &
 
     if !memories.is_empty() {
         let answer = gemini.answer(text, &memories).await?;
+        tracing::info!(user = %user_id, search_ms, answer_ms = clock.elapsed().as_millis() as u64 - search_ms, memories = memories.len(), "question timing");
         if answer.found && !answer.reply.trim().is_empty() {
             let offered: HashSet<String> = hits.iter().chain(here.iter()).filter_map(|m| id_string(m.get("_id"))).collect();
             let used: Vec<String> = answer.memory_ids.into_iter().filter(|id| offered.contains(id)).collect();

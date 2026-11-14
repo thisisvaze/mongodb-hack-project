@@ -767,6 +767,25 @@ Measured during development, not guarantees.
 | Note turn | about 3 s |
 | Question turn | 1.2 to 3.7 s |
 
+## The name "Robin", and "what's this?"
+
+- **Name.** The glasses answer to "Robin" (`WAKE_WORDS`, default
+  `robin,robbin,robyn`). The name, and a leading "hey", are taken out of the
+  words before anything else: "Hey Robin, what's this?" is handled as "what's this?".
+- **Overheard speech.** A turn sent with `"passive": true` is something the
+  glasses overheard, not something said after a button press. It is only
+  answered if it uses the name. Without the name, a sentence about where
+  something is ("I am putting my umbrella under the counter") is remembered
+  silently (`kind: "saved"`, empty `reply_text`), and anything else is dropped
+  with no model call (`kind: "ignored"`). `WAKE_WORD_REQUIRED=true` treats every
+  turn that way, including typed ones.
+- **"What's this?"** A question about the view right now ("what's this", "what am
+  I holding", "what is in front of me") that comes with a picture is answered by
+  Gemini looking at that picture, not from memory. It writes a `query_answered`
+  audit row with no memory ids.
+- **English.** A turn mostly in another script or language is rewritten in
+  English before it is sorted, stored or answered.
+
 ## Guardrails on words
 
 These follow `backend/guardrails` (the JavaScript reference) and live in

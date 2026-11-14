@@ -72,6 +72,11 @@ pub struct Config {
     index_live_frames: bool,
     /// The address clients reach this server at, for links in events. Taken from the request when not set.
     pub public_base: Option<String>,
+    /// The assistant's name and the spellings speech-to-text gives it.
+    pub wake_words: Vec<String>,
+    /// True: nothing is answered unless the name is said. False: only turns
+    /// the client marks as overheard ("passive") need the name.
+    pub wake_word_required: bool,
     /// True only for local testing: photo links may then use http and point at this machine.
     pub allow_local_image_urls: bool,
     /// The built web app (frontend/web/dist). When present, this server also serves the dashboard.
@@ -126,6 +131,8 @@ impl Config {
             guide_repeat_ms: env_num("GUIDE_REPEAT_SECS", 30_u64) * 1000,
             index_live_frames: env_or("INDEX_LIVE_FRAMES", "true") != "false",
             public_base: env_opt("PUBLIC_BASE"),
+            wake_words: env_or("WAKE_WORDS", "robin,robbin,robyn").split(',').map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty()).collect(),
+            wake_word_required: env_or("WAKE_WORD_REQUIRED", "false") == "true",
             allow_local_image_urls: env_or("ALLOW_LOCAL_IMAGE_URLS", "false") == "true",
             web_dir: Some(std::path::PathBuf::from(env_or("WEB_DIR", "../frontend/web/dist"))).filter(|dir| dir.join("index.html").is_file()),
         })

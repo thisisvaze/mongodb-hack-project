@@ -119,6 +119,31 @@ pub fn redact(text: &str) -> Redacted {
     Redacted { text, found }
 }
 
+/// Looks for the assistant's name in what was said. Returns whether the
+/// person was talking to it, and the words with the name (and a leading "hey")
+/// taken out: "Hey Robin, what's this?" -> (true, "what's this?").
+pub fn strip_wake_word(text: &str, names: &[String]) -> (bool, String) {
+    if names.is_empty() {
+        return (false, text.to_string());
+    }
+    let alternatives: Vec<String> = names.iter().map(|n| regex::escape(n)).collect();
+    let pattern = format!(r"(?i)(?:\b(?:hey|hi|ok|okay|yo)[\s,]+)?\b(?:{})\b[\s,.:!-]*", alternatives.join("|"));
+    match Regex::new(&pattern) {
+        Ok(name) if name.is_match(text) => (true, name.replace_all(text, " ").split_whitespace().collect::<Vec<_>>().join(" ")),
+        _ => (false, text.to_string()),
+    }
+}
+
+/// "What's this?", "What am I holding?": a question about what is in front of
+/// the camera right now, not about something remembered.
+static ABOUT_THE_VIEW: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bwhat(?:'s|s| is| are)?\s+(?:this|that|these|those|it)\b|\bwhat am i (?:holding|looking at|seeing|facing)\b|\bwhat(?:'s|s| is)? in front of me\b|\bwhat do you see\b|\bdescribe (?:this|that|what)\b").expect("valid pattern")
+});
+
+pub fn asks_about_view(text: &str) -> bool {
+    ABOUT_THE_VIEW.is_match(text)
+}
+
 pub const CANNOT_CONFIRM: &str = "I can't confirm that. Please check with your cane or ask someone nearby.";
 pub const LABEL_REMINDER: &str = "Please check the label before taking anything.";
 const MAX_REPLY_CHARS: usize = 400;
@@ -245,6 +270,18 @@ mod tests {
         assert_eq!(spoken(directions, false), directions);
         assert!(spoken(&"word ".repeat(200), false).chars().count() <= 400);
         assert!(is_medication("medication", "") && is_medication("other", "the insulin pen") && !is_medication("house_guide", "the kettle"));
+    }
+
+    #[test]
+    fn the_assistant_answers_to_its_name() {
+        let names = vec!["robin".to_string(), "robbin".to_string()];
+        assert_eq!(strip_wake_word("Hey Robin, what's this?", &names), (true, "what's this?".to_string()));
+        assert_eq!(strip_wake_word("robin where are my keys", &names), (true, "where are my keys".to_string()));
+        assert_eq!(strip_wake_word("What is this, Robbin?", &names), (true, "What is this, ?".to_string()));
+        assert_eq!(strip_wake_word("I'm putting my keys in my pocket", &names), (false, "I'm putting my keys in my pocket".to_string()));
+        assert_eq!(strip_wake_word("Robin what's this", &[]), (false, "Robin what's this".to_string()));
+        assert!(asks_about_view("what's this?") && asks_about_view("What am I holding") && asks_about_view("what is in front of me"));
+        assert!(!asks_about_view("Where are my keys?") && !asks_about_view("What time does the cafe open?"));
     }
 
     #[test]
