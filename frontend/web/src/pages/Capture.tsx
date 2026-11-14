@@ -407,19 +407,21 @@ export function Capture() {
         </a>
       </header>
 
-      <nav className="space-tabs" aria-label="Indoor spaces">
-        {SPACE_PRESETS.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            className={`space-tab${preset.id === spaceId ? ' is-active' : ''}`}
-            aria-pressed={preset.id === spaceId}
-            onClick={() => switchSpace(preset.id)}
-          >
-            {preset.label}
-          </button>
-        ))}
-      </nav>
+      {SPACE_PRESETS.length > 1 && (
+        <nav className="space-tabs" aria-label="Indoor spaces">
+          {SPACE_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className={`space-tab${preset.id === spaceId ? ' is-active' : ''}`}
+              aria-pressed={preset.id === spaceId}
+              onClick={() => switchSpace(preset.id)}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </nav>
+      )}
 
       {load.state === 'failed' && (
         <p className="banner" role="alert">

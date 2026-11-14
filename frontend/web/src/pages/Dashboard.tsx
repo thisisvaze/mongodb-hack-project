@@ -74,13 +74,12 @@ export function Dashboard() {
 
   const spaces = SPACE_PRESETS.some((preset) => preset.id === spaceId)
     ? SPACE_PRESETS
-    : [...SPACE_PRESETS, { id: spaceId, label: spaceId, context: 'Custom indoor space', prompts: {} }];
+    : [...SPACE_PRESETS, { id: spaceId, label: spaceId, context: 'Custom indoor space' }];
   const activePreset = spaces.find((preset) => preset.id === spaceId) ?? spaces[0];
 
   const actingUser = data.users.find((user) => user.id === actingId) ?? data.users[0] ?? null;
   const activeCount = data.memories.filter((memory) => memory.status === 'active').length;
   const waiting = data.loaded ? null : loadError ? 'Offline' : 'Loading…';
-  const quickPrompts = actingUser ? (activePreset.prompts[actingUser.role] ?? []) : [];
   const nameOf = (id: string) => data.users.find((user) => user.id === id)?.name ?? id;
 
   const selectSpace = (nextSpace: string) => {
@@ -144,19 +143,21 @@ export function Dashboard() {
           <span className="brand-sub">Blind indoor memory</span>
         </div>
 
-        <nav className="space-tabs" aria-label="Indoor spaces">
-          {spaces.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className={`space-tab${preset.id === spaceId ? ' is-active' : ''}`}
-              aria-pressed={preset.id === spaceId}
-              onClick={() => selectSpace(preset.id)}
-            >
-              {preset.label}
-            </button>
-          ))}
-        </nav>
+        {spaces.length > 1 && (
+          <nav className="space-tabs" aria-label="Indoor spaces">
+            {spaces.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={`space-tab${preset.id === spaceId ? ' is-active' : ''}`}
+                aria-pressed={preset.id === spaceId}
+                onClick={() => selectSpace(preset.id)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </nav>
+        )}
 
         <div className="topbar-tools">
           <span className={`status-dot stream-${status}`} role="status">
@@ -236,21 +237,6 @@ export function Dashboard() {
             </button>
           </div>
 
-          {quickPrompts.length > 0 && (
-            <div className="prompt-chips" aria-label="Quick demo prompts">
-              {quickPrompts.map((prompt) => (
-                <button
-                  key={prompt}
-                  type="button"
-                  className="prompt-chip"
-                  disabled={pending}
-                  onClick={() => void runTurn(prompt)}
-                >
-                  “{prompt}”
-                </button>
-              ))}
-            </div>
-          )}
         </form>
 
         <div className="live-feed" aria-live="polite">

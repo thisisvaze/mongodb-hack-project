@@ -1,9 +1,10 @@
 import type {MiniappSession} from "@mentra/miniapp/background"
 import {messageOf, postFrame, timestamp} from "../shared/api"
-import {isConfigured, type Settings, type Status} from "../shared/channels"
+import {isConfigured, SPACE_ID, type Settings, type Status} from "../shared/channels"
 
 const PHOTO_TIMEOUT_MS = 45_000
 const WARM_DURATION_MS = 30_000
+const MAX_POSTS_IN_FLIGHT = 2 // frames waiting on the server at once; caps the pile-up when it is slow
 
 export interface Camera {
   /** Resolves with a signed photo URL, or null when capture failed. Never rejects. */
@@ -70,7 +71,7 @@ export function createFrameLoop(deps: {
 }) {
   let timer: ReturnType<typeof setInterval> | null = null
   let everyMs: number | null = null
-  let posting = false
+  let postsInFlight = 0
   let sent = 0
   let error: string | null = null
 
@@ -83,17 +84,24 @@ export function createFrameLoop(deps: {
       report()
       return
     }
-    if (deps.turnBusy() || deps.camera.busy() || posting) return
+    if (deps.turnBusy() || deps.camera.busy() || postsInFlight >= MAX_POSTS_IN_FLIGHT) return
 
-    posting = true
+    const url = await deps.camera.capture()
+    // Keep the sensor hot for the next tick; without this it goes cold 30 s after the loop starts.
+    deps.camera.warm()
+    if (!url) {
+      error = "Glasses did not return a photo (see Status above)"
+      report()
+      return
+    }
+
+    // The server downloads the photo and runs live guidance before it answers, so the next
+    // capture starts while this POST is still out.
+    // ponytail: two POSTs can finish out of order and briefly show the older frame; fine for 2-5 s frames.
+    postsInFlight++
     try {
-      const url = await deps.camera.capture()
-      if (!url) {
-        error = "Glasses did not return a photo (see Status above)"
-        return
-      }
       const reply = await postFrame(settings.apiBase, {
-        space_id: settings.spaceId,
+        space_id: SPACE_ID,
         user_id: settings.user!.id,
         ts: timestamp(),
         image_b64: null,
@@ -106,7 +114,7 @@ export function createFrameLoop(deps: {
     } catch (err) {
       error = messageOf(err)
     } finally {
-      posting = false
+      postsInFlight--
       report()
     }
   }

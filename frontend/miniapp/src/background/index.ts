@@ -2,13 +2,13 @@
  * Background entry: owns the glasses. Wires the button to the turn state
  * machine, keeps settings in persistent storage, and answers the phone UI.
  *
- * Battery rule: no microphone or transcription subscription is opened at
- * startup. Subscriptions live only inside a turn's listening window.
+ * Always listening: one transcription subscription opens at startup, so the
+ * wearer just talks. The button still starts a turn too.
  */
 
 import {registerMiniapp} from "@mentra/miniapp/background"
 import {getState, messageOf, normalizeBase, postFrame, timestamp, type SendMode} from "../shared/api"
-import {DEFAULT_SETTINGS, isConfigured, type Channels, type Settings, type Status} from "../shared/channels"
+import {DEFAULT_SETTINGS, isConfigured, SPACE_ID, type Channels, type Settings, type Status} from "../shared/channels"
 import {createCamera, createFrameLoop} from "./camera"
 import {createTurns} from "./turn"
 
@@ -75,7 +75,6 @@ registerMiniapp<Channels>(async (session) => {
   session.ui.handle("saveSettings", async (next) => {
     const saved: Settings = {
       apiBase: normalizeBase(next.apiBase),
-      spaceId: next.spaceId.trim() || DEFAULT_SETTINGS.spaceId,
       user: next.user,
       sendMode: validSendMode(next.sendMode),
     }
@@ -84,8 +83,8 @@ registerMiniapp<Channels>(async (session) => {
     return status
   })
 
-  session.ui.handle("testConnection", async ({apiBase, spaceId}) => {
-    const state = await getState(normalizeBase(apiBase), spaceId.trim() || DEFAULT_SETTINGS.spaceId)
+  session.ui.handle("testConnection", async ({apiBase}) => {
+    const state = await getState(normalizeBase(apiBase), SPACE_ID)
     return {users: state.users ?? [], memories: state.memories?.length ?? 0}
   })
 
@@ -106,7 +105,7 @@ registerMiniapp<Channels>(async (session) => {
     const cur = settings()
     if (isConfigured(cur)) {
       await postFrame(cur.apiBase, {
-        space_id: cur.spaceId,
+        space_id: SPACE_ID,
         user_id: cur.user!.id,
         ts: timestamp(),
         image_b64: null,
@@ -133,4 +132,5 @@ registerMiniapp<Channels>(async (session) => {
   session.onCapabilitiesChange(reportCamera)
 
   await loaded
+  turns.listenAlways()
 })

@@ -9,14 +9,16 @@ import type {InputUsed, SendMode, TurnKind, User} from "./api"
 export interface Settings {
   /** Backend base URL without a trailing slash. Empty until someone sets it. */
   apiBase: string
-  spaceId: string
   /** Who is wearing the glasses, picked from the users in GET /api/state. */
   user: User | null
   /** What each spoken turn sends to POST /api/turn. Default "text" saves battery. */
   sendMode: SendMode
 }
 
-export const DEFAULT_SETTINGS: Settings = {apiBase: "", spaceId: "hotel", user: null, sendMode: "text"}
+/** The one space the glasses use. db/setup.js seeds it on the real backend. */
+export const SPACE_ID = "hotel"
+
+export const DEFAULT_SETTINGS: Settings = {apiBase: "", user: null, sendMode: "text"}
 
 export function isConfigured(settings: Settings): boolean {
   return settings.apiBase !== "" && settings.user !== null
@@ -53,7 +55,7 @@ export interface Channels {
   getStatus: Rpc<null, Status>
   saveSettings: Rpc<Settings, Status>
   /** Calls GET /api/state with values that may not be saved yet. Rejects with the error. */
-  testConnection: Rpc<{apiBase: string; spaceId: string}, {users: User[]; memories: number}>
+  testConnection: Rpc<{apiBase: string}, {users: User[]; memories: number}>
   /** Starts a typed turn. Progress arrives on `status`. */
   sendText: Rpc<{text: string}, {accepted: boolean; reason?: string}>
   /** Takes one photo immediately on the glasses and posts it to /api/frames if configured. */

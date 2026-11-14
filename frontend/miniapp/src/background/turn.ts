@@ -3,9 +3,10 @@
  * listening cue → capture utterance (with a photo in parallel) → unsubscribe mic →
  * POST /api/turn → play the reply.
  *
- * Battery rule: subscriptions exist ONLY during the listening window. In "text"
+ * Button turns open their subscriptions only for the listening window. In "text"
  * mode `session.mic` is never touched; in "audio" mode `session.transcription`
- * is never touched.
+ * is never touched. `listenAlways` adds one session-long transcription
+ * subscription so the wearer can just talk.
  */
 
 import type {AudioChunkData, MiniappSession, TranscriptionData, VadData} from "@mentra/miniapp/background"
@@ -18,7 +19,7 @@ import {
   type TurnAudio,
   type TurnResponse,
 } from "../shared/api"
-import {isConfigured, type Phase, type Settings, type Status} from "../shared/channels"
+import {isConfigured, SPACE_ID, type Phase, type Settings, type Status} from "../shared/channels"
 import {HEARD_TONE, LISTENING_TONE} from "./tones"
 
 const SILENCE_MS = 8_000 // give up after this long without hearing anything
@@ -28,6 +29,7 @@ const TONE_WAIT_MS = 1_200 // longest the listening beep may delay capture
 const SPOKEN_CUE_WAIT_MS = 3_000 // same for spoken fallback cue
 const PHOTO_WAIT_MS = 5_000 // longest a finished utterance waits for its photo
 const MAX_AUDIO_BYTES = 1_200_000 // ~37 s of 16 kHz mono 16-bit PCM
+const ECHO_TAIL_MS = 1_500 // always-on: ignore speech this long after the glasses stop talking
 
 const SAY = {
   notSetUp: "Not set up yet. Open SafeSpace on the phone.",
@@ -367,7 +369,7 @@ export function createTurns(
     let reply: TurnResponse
     try {
       reply = await postTurn(settings.apiBase, {
-        space_id: settings.spaceId,
+        space_id: SPACE_ID,
         user_id: settings.user!.id,
         ts: timestamp(),
         text,
@@ -403,7 +405,32 @@ export function createTurns(
     return true
   }
 
+  /**
+   * Always-on listening: every final transcript becomes a turn, no button needed.
+   * Skips anything heard while a turn runs or the glasses are talking (their own voice).
+   * ponytail: one transcription subscription for the whole session costs battery, and it is
+   * text only (the Audio/Both payload applies to button turns). Add an on/off switch if that bites.
+   */
+  function listenAlways(): void {
+    let quietUntil = 0
+    session.speaker.onStateChange(() => {
+      if (!session.speaker.isPlaying) quietUntil = Date.now() + ECHO_TAIL_MS
+    })
+    session.transcription.on((data: TranscriptionData) => {
+      const t = data.text.trim()
+      if (!t || phase !== "idle" || session.speaker.isPlaying || Date.now() < quietUntil) return
+      if (!isConfigured(deps.settings())) return
+      if (!data.isFinal) {
+        deps.push({heard: t})
+        return
+      }
+      console.log(`heard: ${t}`)
+      begin(t)
+    })
+  }
+
   return {
+    listenAlways,
     press: () => void begin(null),
     sendText: (text: string) => begin(text),
     busy: () => phase !== "idle",

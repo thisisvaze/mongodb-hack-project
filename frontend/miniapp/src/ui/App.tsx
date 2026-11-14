@@ -3,12 +3,6 @@ import {MiniappHeader, useSafeArea} from "@mentra/miniapp/ui"
 import type {SendMode, User} from "../shared/api"
 import {isConfigured, type Phase, type Settings, type Status} from "../shared/channels"
 
-const SPACES = [
-  {id: "hotel", label: "Hotel 412"},
-  {id: "home", label: "Home"},
-  {id: "office", label: "Office"},
-] as const
-
 const SEND_MODES: Array<{id: SendMode; label: string}> = [
   {id: "text", label: "Text"},
   {id: "audio", label: "Audio"},
@@ -22,7 +16,7 @@ const FRAME_OPTIONS: Array<{everyMs: number | null; label: string}> = [
 ]
 
 const PHASE_TEXT: Record<Phase, string> = {
-  idle: "Press glasses button to speak",
+  idle: "Listening, just speak",
   listening: "Listening…",
   sending: "Thinking…",
   speaking: "Speaking…",
@@ -130,15 +124,15 @@ function Controls({status, onSaved}: {status: Status; onSaved: (next: Status) =>
     }
   }
 
-  const connectSpace = async (targetBase: string, targetSpace: string) => {
+  const connect = async (targetBase: string) => {
     if (!targetBase.trim()) return
     setLoading(true)
     setConnNote(null)
     try {
-      const res = await mentra.request("testConnection", {apiBase: targetBase, spaceId: targetSpace}, {timeout: 15_000})
+      const res = await mentra.request("testConnection", {apiBase: targetBase}, {timeout: 15_000})
       setUsers(res.users)
       const keepUser = res.users.find((u) => u.id === saved.user?.id) ?? res.users[0] ?? null
-      await persist({apiBase: targetBase, spaceId: targetSpace, user: keepUser}, res.users)
+      await persist({apiBase: targetBase, user: keepUser}, res.users)
       setConnNote({ok: true, text: "Connected"})
     } catch (err) {
       setConnNote({ok: false, text: errorText(err)})
@@ -148,7 +142,7 @@ function Controls({status, onSaved}: {status: Status; onSaved: (next: Status) =>
   }
 
   useEffect(() => {
-    if (saved.apiBase) void connectSpace(saved.apiBase, saved.spaceId)
+    if (saved.apiBase) void connect(saved.apiBase)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -161,7 +155,7 @@ function Controls({status, onSaved}: {status: Status; onSaved: (next: Status) =>
             id="server-url"
             value={apiBase}
             onChange={(e) => setApiBase(e.target.value)}
-            placeholder="http://192.168.6.193:8787"
+            placeholder="http://192.168.6.195:8080"
             inputMode="url"
             autoCapitalize="none"
             autoCorrect="off"
@@ -169,30 +163,12 @@ function Controls({status, onSaved}: {status: Status; onSaved: (next: Status) =>
           />
           <button
             type="button"
-            onClick={() => void connectSpace(apiBase, saved.spaceId)}
+            onClick={() => void connect(apiBase)}
             disabled={loading || apiBase.trim() === ""}>
             {loading ? "…" : "Connect"}
           </button>
         </div>
         {connNote && <p className={connNote.ok ? "ok" : "err"}>{connNote.text}</p>}
-      </div>
-
-      <div className="field">
-        <span className="label">Space</span>
-        <div className="seg" role="radiogroup" aria-label="Space">
-          {SPACES.map((sp) => (
-            <button
-              key={sp.id}
-              type="button"
-              role="radio"
-              aria-checked={saved.spaceId === sp.id}
-              className={saved.spaceId === sp.id ? "active" : ""}
-              disabled={loading}
-              onClick={() => void connectSpace(apiBase || saved.apiBase, sp.id)}>
-              {sp.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       {users.length > 0 && (
