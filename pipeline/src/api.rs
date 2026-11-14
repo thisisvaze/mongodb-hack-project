@@ -71,9 +71,18 @@ fn bad_request(message: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, message.into())
 }
 
-/// Browsers on another origin (the dashboard, a phone) must be allowed to call the API.
+/// Browsers on another origin (the dashboard, a phone) must be allowed to call
+/// the API. Every API request is also logged with who sent it, so it is easy to
+/// see whether a phone or the glasses are getting through.
 pub async fn cors(req: Request, next: Next) -> Response {
+    let started = std::time::Instant::now();
+    let (method, path) = (req.method().clone(), req.uri().path().to_string());
+    let query = req.uri().query().unwrap_or_default().to_string();
+    let from = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>().map(|peer| peer.0.ip().to_string()).unwrap_or_default();
     let mut response = if req.method() == Method::OPTIONS { StatusCode::NO_CONTENT.into_response() } else { next.run(req).await };
+    if path.starts_with("/api/") && path != "/api/frame/latest" {
+        tracing::info!(%method, path, query, status = response.status().as_u16(), from, ms = started.elapsed().as_millis() as u64, "request");
+    }
     let headers = response.headers_mut();
     headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
     headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, PUT, OPTIONS"));

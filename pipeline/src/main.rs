@@ -632,7 +632,7 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&app.cfg.bind).await.with_context(|| format!("binding {}", app.cfg.bind))?;
     tracing::info!(bind = %app.cfg.bind, db = %app.cfg.db, gate_tick_ms = app.cfg.gate_tick_ms, web_app = app.cfg.web_dir.is_some(), "pipeline listening");
-    axum::serve(listener, router)
+    axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
