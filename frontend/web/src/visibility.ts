@@ -12,12 +12,14 @@ export function canSee(user: User, memory: Memory, rules: Rules): boolean {
   return groups.includes('*') || groups.includes(memory.group);
 }
 
-/** The reason behind canSee, as a short phrase for the memory card. */
+/** Short human label for who can access a memory. */
 export function visibilityReason(user: User, memory: Memory, rules: Rules): string {
-  if (memory.owner_id === user.id) return 'owns this memory';
+  if (memory.owner_id === user.id) return 'Owner';
   const groups = rules.roles[user.role]?.can_see ?? [];
-  if (groups.includes('*')) return `role ${user.role} sees everything`;
-  return groups.includes(memory.group)
-    ? `role ${user.role} can see group ${memory.group}`
-    : `role ${user.role} cannot see group ${memory.group}`;
+  if (groups.includes('*')) return 'Full access';
+  return groups.includes(memory.group) ? `Shared (${formatGroup(memory.group)})` : `Private (${formatGroup(memory.group)})`;
+}
+
+export function formatGroup(group: string): string {
+  return group.replace(/_/g, ' ');
 }

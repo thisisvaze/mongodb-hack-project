@@ -49,6 +49,7 @@ export interface SpaceData {
 }
 
 type Action =
+  | { type: 'reset' }
   | { type: 'snapshot'; snapshot: SpaceState }
   | { type: 'memory'; memory: Memory }
   | { type: 'audit'; entry: AuditEntry }
@@ -65,6 +66,8 @@ const newestAudit = (list: AuditEntry[]) => [...list].sort((a, b) => time(b.ts) 
 
 function reduce(data: SpaceData, action: Action): SpaceData {
   switch (action.type) {
+    case 'reset':
+      return EMPTY;
     case 'snapshot':
       return {
         ...data,
@@ -152,6 +155,8 @@ export function useSpace(spaceId: string): Space {
       timers.add(timer);
     };
 
+    dispatch({ type: 'reset' });
+    setLoadError(null);
     load();
     const close = openEvents(spaceId, {
       onStatus: setStatus,

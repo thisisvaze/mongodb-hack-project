@@ -1,6 +1,6 @@
 import {useEffect, useState, type FormEvent} from "react"
 import {MiniappHeader, useSafeArea} from "@mentra/miniapp/ui"
-import type {User} from "../shared/api"
+import type {SendMode, User} from "../shared/api"
 import {isConfigured, type Phase, type Status} from "../shared/channels"
 
 const PHASE_LABEL: Record<Phase, string> = {
@@ -8,6 +8,12 @@ const PHASE_LABEL: Record<Phase, string> = {
   listening: "Listening…",
   sending: "Sending…",
   speaking: "Speaking…",
+}
+
+const SEND_LABEL: Record<SendMode, string> = {
+  text: "Text only (saves battery)",
+  audio: "Raw audio only",
+  both: "Both text and audio",
 }
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
@@ -49,7 +55,7 @@ export function App() {
 }
 
 function StatusCard({status}: {status: Status}) {
-  const {settings, reply, photo} = status
+  const {settings, reply, photo, audioSent, inputUsed} = status
   const configured = isConfigured(settings)
 
   return (
@@ -65,10 +71,26 @@ function StatusCard({status}: {status: Status}) {
         <dd>{settings.user ? `${settings.user.name} (${settings.user.role})` : "not chosen"}</dd>
         <dt>Space</dt>
         <dd>{settings.spaceId}</dd>
+        <dt>Send</dt>
+        <dd>{SEND_LABEL[settings.sendMode]}</dd>
         <dt>Camera</dt>
         <dd>{status.hasCamera === null ? "no glasses connected" : status.hasCamera ? "yes" : "none on these glasses"}</dd>
         <dt>Heard</dt>
         <dd>{status.heard ?? "nothing yet"}</dd>
+        {audioSent && (
+          <>
+            <dt>Audio</dt>
+            <dd>
+              {audioSent.kb} KB ({audioSent.format})
+            </dd>
+          </>
+        )}
+        {inputUsed && (
+          <>
+            <dt>Used</dt>
+            <dd>{inputUsed}</dd>
+          </>
+        )}
         <dt>Reply</dt>
         <dd>{reply ? `${reply.kind}: ${reply.text}` : "nothing yet"}</dd>
       </dl>
@@ -113,7 +135,7 @@ function TypedTurn({disabled}: {disabled: boolean}) {
           Send
         </button>
       </form>
-      <p className="muted">Runs the same flow as the glasses button. The reply is spoken.</p>
+      <p className="muted">Typed turns always send text only. The reply is spoken.</p>
       {note && <p className="warn">{note}</p>}
     </section>
   )
@@ -124,6 +146,7 @@ function Setup({status}: {status: Status}) {
   const [apiBase, setApiBase] = useState(saved.apiBase)
   const [spaceId, setSpaceId] = useState(saved.spaceId)
   const [userId, setUserId] = useState(saved.user?.id ?? "")
+  const [sendMode, setSendMode] = useState<SendMode>(saved.sendMode)
   const [users, setUsers] = useState<User[]>(saved.user ? [saved.user] : [])
   const [result, setResult] = useState<{ok: boolean; text: string} | null>(null)
   const [busy, setBusy] = useState(false)
@@ -143,7 +166,6 @@ function Setup({status}: {status: Status}) {
     }
   }
 
-  // Fill the user list when the UI opens with a saved server.
   useEffect(() => {
     if (saved.apiBase) void test()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -153,9 +175,10 @@ function Setup({status}: {status: Status}) {
     setBusy(true)
     try {
       const user = users.find((candidate) => candidate.id === userId) ?? null
-      const next = await mentra.request("saveSettings", {apiBase, spaceId, user}, {timeout: 10_000})
+      const next = await mentra.request("saveSettings", {apiBase, spaceId, user, sendMode}, {timeout: 10_000})
       setApiBase(next.settings.apiBase)
       setSpaceId(next.settings.spaceId)
+      setSendMode(next.settings.sendMode)
       setResult({ok: true, text: "Saved."})
     } catch (err) {
       setResult({ok: false, text: `Not saved: ${errorText(err)}`})
@@ -164,7 +187,11 @@ function Setup({status}: {status: Status}) {
     }
   }
 
-  const unsaved = apiBase !== saved.apiBase || spaceId !== saved.spaceId || userId !== (saved.user?.id ?? "")
+  const unsaved =
+    apiBase !== saved.apiBase ||
+    spaceId !== saved.spaceId ||
+    userId !== (saved.user?.id ?? "") ||
+    sendMode !== saved.sendMode
 
   return (
     <section>
@@ -203,6 +230,14 @@ function Setup({status}: {status: Status}) {
               {user.name} ({user.role})
             </option>
           ))}
+        </select>
+      </label>
+      <label>
+        Send with each spoken turn
+        <select value={sendMode} onChange={(event) => setSendMode(event.target.value as SendMode)}>
+          <option value="text">Text only (default, saves battery)</option>
+          <option value="audio">Raw audio only</option>
+          <option value="both">Both text and raw audio</option>
         </select>
       </label>
       <button type="button" onClick={save} disabled={busy || !unsaved}>

@@ -55,7 +55,102 @@ function resolveApiBase(): string {
 
 export const API_BASE = resolveApiBase();
 
-export const SPACE_ID = new URLSearchParams(window.location.search).get('space') || 'home';
+export interface SpacePreset {
+  id: string;
+  label: string;
+  context: string;
+  prompts: Record<string, string[]>;
+}
+
+export const SPACE_PRESETS: SpacePreset[] = [
+  {
+    id: 'hotel',
+    label: 'Hotel Room 412',
+    context: 'Temporary stay · private items wipe at checkout',
+    prompts: {
+      guest: [
+        'My passport is in the room safe on the closet shelf',
+        'Where is the shampoo bottle?',
+        'Check out of the room',
+      ],
+      staff: [
+        'Fresh towels are on the lower bathroom rack',
+        'Where did the guest put their passport?',
+      ],
+      next_guest: [
+        'Where is the thermostat and wall outlet?',
+        'Where is the previous guest passport?',
+      ],
+    },
+  },
+  {
+    id: 'home',
+    label: 'Shared Home',
+    context: 'Household · shared layout & care, personal items locked',
+    prompts: {
+      resident: [
+        "I'm putting my keys in my left jacket pocket",
+        'Where are my evening pills?',
+        'Forget my house keys',
+      ],
+      caregiver: [
+        'Evening pills are in the pill organizer left of the kettle',
+        'Where are the house keys?',
+      ],
+      visitor: [
+        'Where is the bathroom?',
+        'Where are the evening pills?',
+      ],
+    },
+  },
+  {
+    id: 'office',
+    label: 'Office Floor 3',
+    context: 'Workplace · shared tactile landmarks, personal gear locked',
+    prompts: {
+      member: [
+        'My spare cane is hooked under the right side of my desk',
+        'Where is the elevator from suite 300?',
+      ],
+      coworker: [
+        'Taped cable ramp across the center aisle near printer',
+        'Where is the coffee mug shelf?',
+      ],
+      visitor: [
+        'Where is the accessible restroom?',
+        'Where is the spare cane?',
+      ],
+    },
+  },
+];
+
+export const DEFAULT_SPACE_ID = 'hotel';
+
+export function readInitialSpace(): string {
+  const fromUrl = new URLSearchParams(window.location.search).get('space')?.trim();
+  if (fromUrl) return fromUrl;
+  try {
+    const saved = localStorage.getItem('spatialRecall.spaceId')?.trim();
+    if (saved) return saved;
+  } catch {
+    // Ignore blocked storage.
+  }
+  return DEFAULT_SPACE_ID;
+}
+
+export function syncSpaceParam(spaceId: string): void {
+  try {
+    localStorage.setItem('spatialRecall.spaceId', spaceId);
+  } catch {
+    // Ignore blocked storage.
+  }
+  const url = new URL(window.location.href);
+  if (spaceId === DEFAULT_SPACE_ID) url.searchParams.delete('space');
+  else url.searchParams.set('space', spaceId);
+  window.history.replaceState(null, '', url.toString());
+}
+
+export const SPACE_ID = readInitialSpace();
 
 /** Saves a new base URL (null goes back to the default) and reloads the page. */
 export function changeApiBase(next: string | null): void {
@@ -65,11 +160,11 @@ export function changeApiBase(next: string | null): void {
   window.location.replace(url.toString());
 }
 
-/** A link to another route that carries the current base URL, for opening on a phone. */
-export function linkWithApi(path: string): string {
+/** A link to another route that carries the current base URL and space, for opening on a phone. */
+export function linkWithApi(path: string, spaceId = SPACE_ID): string {
   const params = new URLSearchParams();
   if (API_BASE !== DEFAULT_API_BASE) params.set('api', API_BASE);
-  if (SPACE_ID !== 'home') params.set('space', SPACE_ID);
+  if (spaceId && spaceId !== DEFAULT_SPACE_ID) params.set('space', spaceId);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
 }

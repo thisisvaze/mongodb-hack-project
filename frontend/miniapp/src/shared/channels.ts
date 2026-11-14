@@ -4,7 +4,7 @@
  */
 
 import type {Rpc} from "@mentra/miniapp/ui"
-import type {TurnKind, User} from "./api"
+import type {InputUsed, SendMode, TurnKind, User} from "./api"
 
 export interface Settings {
   /** Backend base URL without a trailing slash. Empty until someone sets it. */
@@ -12,9 +12,11 @@ export interface Settings {
   spaceId: string
   /** Who is wearing the glasses, picked from the users in GET /api/state. */
   user: User | null
+  /** What each spoken turn sends to POST /api/turn. Default "text" saves battery. */
+  sendMode: SendMode
 }
 
-export const DEFAULT_SETTINGS: Settings = {apiBase: "", spaceId: "home", user: null}
+export const DEFAULT_SETTINGS: Settings = {apiBase: "", spaceId: "home", user: null, sendMode: "text"}
 
 export function isConfigured(settings: Settings): boolean {
   return settings.apiBase !== "" && settings.user !== null
@@ -29,6 +31,10 @@ export interface Status {
   phase: Phase
   /** The words heard or typed for the latest turn. Updates live while listening. */
   heard: string | null
+  /** Audio clip summary from the latest turn, when audio was sent. */
+  audioSent: {format: string; kb: number} | null
+  /** Which input ("text" or "audio") the backend reported using on the latest reply. */
+  inputUsed: InputUsed
   reply: {kind: TurnKind; text: string} | null
   /** Why the latest turn failed, if it did. */
   error: string | null

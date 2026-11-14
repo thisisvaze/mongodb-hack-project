@@ -44,19 +44,19 @@ export const STATUS_LABEL: Record<MemoryStatus, string> = {
 };
 
 export const SOURCE_LABEL: Record<MemorySource, string> = {
-  camera: 'Camera',
-  voice: 'Voice',
-  both: 'Camera and voice',
+  camera: 'Glasses cam',
+  voice: 'Voice note',
+  both: 'Cam + voice',
 };
 
 export const ACTION_LABEL: Record<AuditAction, string> = {
-  memory_stored: 'Memory stored',
-  memory_superseded: 'Memory superseded',
-  memory_forgotten: 'Memory forgotten',
-  memory_expired: 'Memory expired',
-  query_answered: 'Query answered',
-  query_denied: 'Query denied',
-  rule_changed: 'Rule changed',
+  memory_stored: 'Saved',
+  memory_superseded: 'Updated',
+  memory_forgotten: 'Wiped',
+  memory_expired: 'Expired',
+  query_answered: 'Answered',
+  query_denied: 'Blocked',
+  rule_changed: 'Rule updated',
 };
 
 export const VERDICT_LABEL: Record<AuditVerdict, string> = {

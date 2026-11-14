@@ -12,6 +12,7 @@ const HOST = process.env.HOST || '';
 const PUBLIC_BASE = (process.env.PUBLIC_BASE || '').replace(/\/+$/, '');
 
 const SPACE_ID = 'home';
+// The contract asks for at least 2 MB, so a 25 second recording fits as base64.
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const PING_MS = 15_000;
 const EXPIRY_SWEEP_MS = 2_000;
@@ -166,6 +167,7 @@ let auditSeq = state.audit.length;
 const nextId = (prefix, n) => `${prefix}_${String(n).padStart(2, '0')}`;
 
 const latestFrames = new Map(); // user_id -> { ts, buf, url, version }
+const latestAudio = new Map(); // user_id -> { ts, format, sampleRate, channels, buf }
 const memoryImages = new Map(); // memory_id -> Buffer
 const sseClients = new Set(); // { res, base }
 
@@ -577,6 +579,85 @@ function readImage(body) {
   return null;
 }
 
+// Loose checks only: the fields have the right types. 415 is kept for audio with no bytes in it.
+function readAudio(body) {
+  const audio = body.audio;
+  if (audio == null) return null;
+  if (!isObject(audio)) throw new HttpError(400, 'audio must be an object or null');
+  if (typeof audio.format !== 'string' || !audio.format.trim()) {
+    throw new HttpError(400, 'audio.format must be a non-empty string');
+  }
+  const sampleRate = audio.sample_rate ?? null;
+  if (sampleRate !== null && !(typeof sampleRate === 'number' && Number.isFinite(sampleRate) && sampleRate > 0)) {
+    throw new HttpError(400, 'audio.sample_rate must be a positive number or null');
+  }
+  const channels = audio.channels ?? 1;
+  if (!(typeof channels === 'number' && Number.isInteger(channels) && channels > 0)) {
+    throw new HttpError(400, 'audio.channels must be a whole number');
+  }
+  if (typeof audio.data_b64 !== 'string') throw new HttpError(400, 'audio.data_b64 must be a base64 string');
+  const buf = Buffer.from(audio.data_b64.replace(/^data:[^,]*,/, '').replace(/\s+/g, ''), 'base64');
+  if (!buf.length) throw new HttpError(415, 'audio.data_b64 is empty, so there is no audio to read');
+  return { format: audio.format.trim(), sampleRate, channels, buf };
+}
+
+// Format, channel count, sample rate and length of the samples in a WAV file, or null.
+function wavInfo(buf) {
+  if (buf.length < 12 || buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WAVE') return null;
+  let fmt = null;
+  for (let offset = 12; offset + 8 <= buf.length; ) {
+    const id = buf.toString('latin1', offset, offset + 4);
+    const size = buf.readUInt32LE(offset + 4);
+    if (id === 'fmt ' && offset + 24 <= buf.length) {
+      fmt = {
+        channels: buf.readUInt16LE(offset + 10),
+        sampleRate: buf.readUInt32LE(offset + 12),
+        bits: buf.readUInt16LE(offset + 22),
+      };
+    }
+    if (id === 'data') {
+      const bytesPerSecond = fmt ? fmt.sampleRate * fmt.channels * (fmt.bits / 8) : 0;
+      if (!bytesPerSecond) return null;
+      const dataBytes = Math.min(size, buf.length - offset - 8);
+      return { ...fmt, dataBytes, seconds: dataBytes / bytesPerSecond };
+    }
+    offset += 8 + size + (size % 2);
+  }
+  return null;
+}
+
+function wavHeader(dataBytes, sampleRate, channels) {
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'latin1');
+  header.writeUInt32LE(36 + dataBytes, 4);
+  header.write('WAVEfmt ', 8, 'latin1');
+  header.writeUInt32LE(16, 16); // size of the fmt chunk
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * channels * 2, 28);
+  header.writeUInt16LE(channels * 2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36, 'latin1');
+  header.writeUInt32LE(dataBytes, 40);
+  return header;
+}
+
+// Length in seconds when the format says enough to work it out, otherwise null.
+function audioSeconds(audio) {
+  const format = audio.format.toLowerCase();
+  if (format === 'wav') return wavInfo(audio.buf)?.seconds ?? null;
+  if (format === 'pcm_s16le' && audio.sampleRate) return audio.buf.length / (audio.sampleRate * 2 * audio.channels);
+  return null;
+}
+
+function describeAudio(audio) {
+  const seconds = audioSeconds(audio);
+  const rate = audio.sampleRate ? `${audio.sampleRate} Hz` : 'sample rate not given';
+  const size = `${(audio.buf.length / 1024).toFixed(1)} KB`;
+  return `${audio.format}, ${rate}, ${size}${seconds === null ? '' : `, ${seconds.toFixed(1)} s`}`;
+}
+
 function storeFrame(userId, image, ts) {
   const version = (latestFrames.get(userId)?.version ?? 0) + 1;
   latestFrames.set(userId, { ts, version, buf: image.buf ?? null, url: image.url ?? null });
@@ -585,9 +666,10 @@ function storeFrame(userId, image, ts) {
 }
 
 function requireSpace(spaceId) {
-  if (spaceId != null && spaceId !== '' && spaceId !== SPACE_ID) {
-    throw new HttpError(404, `Unknown space_id "${spaceId}". The mock only has "${SPACE_ID}".`);
+  if (spaceId != null && typeof spaceId !== 'string') {
+    throw new HttpError(400, 'space_id must be a string');
   }
+  return (spaceId ?? '').trim() || SPACE_ID;
 }
 
 function requireUser(userId) {
@@ -602,21 +684,50 @@ const validTs = (ts) => (typeof ts === 'string' && !Number.isNaN(Date.parse(ts))
 function handleTurn(body) {
   requireSpace(body.space_id);
   const user = requireUser(body.user_id);
-  if (typeof body.text !== 'string') throw new HttpError(400, 'text must be a string');
+  if (body.text != null && typeof body.text !== 'string') throw new HttpError(400, 'text must be a string or null');
+  const audio = readAudio(body);
+  if (body.text == null && !audio) throw new HttpError(400, 'Send text, audio or both. This turn has neither.');
   const image = readImage(body);
   // Not required by the contract: a turn's picture also becomes the user's latest frame.
   if (image) storeFrame(user.id, image, validTs(body.ts));
+  // MOCK ONLY: kept so a developer can listen to it at GET /audio/<user_id>.
+  if (audio) latestAudio.set(user.id, { ...audio, ts: validTs(body.ts) });
 
-  const text = body.text.trim();
-  const intent = classify(text);
-  const result =
-    intent === 'note' ? saveNote(user, text, image)
-    : intent === 'question' ? answerQuestion(user, text)
-    : intent === 'forget' ? forget(user, text)
-    : ignore(user, text);
+  const text = (body.text ?? '').trim();
+  let result;
+  let inputUsed = 'text';
+  if (audio && !text) {
+    // The mock cannot transcribe, so an audio-only turn never touches the memories.
+    inputUsed = 'audio';
+    const seconds = audioSeconds(audio);
+    result = ignore(
+      user,
+      '',
+      `Ignored an audio-only turn (${describeAudio(audio)}). The mock cannot transcribe audio.`,
+      `Audio received${seconds === null ? '' : `, ${seconds.toFixed(1)} seconds`}. This mock cannot transcribe it.`,
+    );
+  } else {
+    // With text and audio together the mock acts on the text.
+    const intent = classify(text);
+    result =
+      intent === 'note' ? saveNote(user, text, image)
+      : intent === 'question' ? answerQuestion(user, text)
+      : intent === 'forget' ? forget(user, text)
+      : ignore(user, text);
+  }
 
-  log(`turn ${user.id} "${text.slice(0, 60)}"${image ? ' +image' : ''} -> ${result.kind}`);
-  return { kind: result.kind, reply_text: result.reply_text, audio_url: null, memory_ids: result.memory_ids };
+  log(
+    `turn ${user.id} ${text ? `"${text.slice(0, 60)}"` : '(no text)'}${image ? ' +image' : ''} ` +
+      `${audio ? `+audio ${describeAudio(audio)}` : 'no audio'} -> ${result.kind}`,
+  );
+  return {
+    kind: result.kind,
+    reply_text: result.reply_text,
+    audio_url: null,
+    memory_ids: result.memory_ids,
+    heard_text: inputUsed === 'text' ? text || null : null,
+    input_used: inputUsed,
+  };
 }
 
 function handleFrame(body) {
@@ -734,6 +845,22 @@ function sendImage(res, buf) {
   res.end(buf);
 }
 
+// MOCK ONLY: lets a developer play back the latest turn audio sent by a user.
+function sendAudio(res, entry) {
+  if (!entry) return sendJson(res, 404, { error: 'No audio recorded for that user yet' });
+  const fmt = entry.format.toLowerCase();
+  let out = entry.buf;
+  let type = 'application/octet-stream';
+  if (fmt === 'wav') {
+    type = 'audio/wav';
+  } else if (fmt === 'pcm_s16le' && entry.sampleRate) {
+    out = Buffer.concat([wavHeader(entry.buf.length, entry.sampleRate, entry.channels || 1), entry.buf]);
+    type = 'audio/wav';
+  }
+  res.writeHead(200, { ...CORS, 'Content-Type': type, 'Content-Length': out.length, 'Cache-Control': 'no-store' });
+  res.end(out);
+}
+
 function readJson(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -804,6 +931,8 @@ async function route(req, res) {
     if (frame) return sendImage(res, latestFrames.get(decodeURIComponent(frame[1]))?.buf);
     const image = /^\/images\/(.+)\.jpg$/.exec(path);
     if (image) return sendImage(res, memoryImages.get(decodeURIComponent(image[1])));
+    const audio = /^\/audio\/([^/]+)$/.exec(path);
+    if (audio) return sendAudio(res, latestAudio.get(decodeURIComponent(audio[1]).replace(/\.wav$/i, '')));
   }
 
   const methods = ROUTES[path];
@@ -818,10 +947,10 @@ async function route(req, res) {
         endpoints: ['GET /api/state', 'POST /api/turn', 'POST /api/frames', 'PUT /api/rules', 'GET /api/events'],
       });
     case '/api/state': {
-      requireSpace(spaceParam);
+      const requestedSpace = requireSpace(spaceParam);
       const base = baseOf(req);
       return sendJson(res, 200, {
-        space_id: SPACE_ID,
+        space_id: requestedSpace,
         users: state.users,
         rules: state.rules,
         memories: state.memories.map((m) => toWire(m, base)),

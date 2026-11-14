@@ -38,13 +38,14 @@ export function Dashboard() {
     if (!muted) unlockSpeech();
     setPending(true);
     setText('');
-    const turn = { userName: actingUser.name, text: said, sentImage: false };
+    const turn = { userName: actingUser.name, text: said, sentAudio: false, sentImage: false };
     try {
       const response = await postTurn({
         space_id: SPACE_ID,
         user_id: actingUser.id,
         ts: nowIso(),
         text: said,
+        audio: null,
         image_b64: null,
         image_url: null,
       });

@@ -1,15 +1,22 @@
 /**
- * Background entry: owns the glasses. Wires the button and the microphone to
- * the turn state machine, keeps the settings, and answers the phone UI.
+ * Background entry: owns the glasses. Wires the button to the turn state
+ * machine, keeps settings in persistent storage, and answers the phone UI.
+ *
+ * Battery rule: no microphone or transcription subscription is opened at
+ * startup. Subscriptions live only inside a turn's listening window.
  */
 
 import {registerMiniapp} from "@mentra/miniapp/background"
-import {getState, messageOf, normalizeBase} from "../shared/api"
+import {getState, messageOf, normalizeBase, type SendMode} from "../shared/api"
 import {DEFAULT_SETTINGS, isConfigured, type Channels, type Settings, type Status} from "../shared/channels"
 import {createCamera, createFrameLoop} from "./camera"
 import {createTurns} from "./turn"
 
 const SETTINGS_KEY = "settings"
+
+function validSendMode(value: unknown): SendMode {
+  return value === "audio" || value === "both" ? value : "text"
+}
 
 registerMiniapp<Channels>(async (session) => {
   const status: Status = {
@@ -17,6 +24,8 @@ registerMiniapp<Channels>(async (session) => {
     hasCamera: null,
     phase: "idle",
     heard: null,
+    audioSent: null,
+    inputUsed: null,
     reply: null,
     error: null,
     photo: null,
@@ -24,8 +33,6 @@ registerMiniapp<Channels>(async (session) => {
     frames: {on: false, sent: 0, error: null},
   }
 
-  // session.ui.send drops the message when the phone UI is closed, which is fine:
-  // the UI asks for the whole status when it opens.
   const push = (patch: Partial<Status>) => {
     Object.assign(status, patch)
     session.ui.send("status", status)
@@ -39,7 +46,15 @@ registerMiniapp<Channels>(async (session) => {
   const loaded = session.storage
     .get(SETTINGS_KEY)
     .then((raw) => {
-      if (raw) push({settings: {...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>)}})
+      if (!raw) return
+      const parsed = JSON.parse(raw) as Partial<Settings>
+      push({
+        settings: {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          sendMode: validSendMode(parsed.sendMode),
+        },
+      })
     })
     .catch((err: unknown) => console.warn("could not load settings:", messageOf(err)))
 
@@ -54,6 +69,7 @@ registerMiniapp<Channels>(async (session) => {
       apiBase: normalizeBase(next.apiBase),
       spaceId: next.spaceId.trim() || DEFAULT_SETTINGS.spaceId,
       user: next.user,
+      sendMode: validSendMode(next.sendMode),
     }
     await session.storage.set(SETTINGS_KEY, JSON.stringify(saved))
     push({settings: saved})
@@ -81,11 +97,6 @@ registerMiniapp<Channels>(async (session) => {
     console.log(`button ${press.buttonId} ${press.pressType}`)
     void loaded.then(turns.press)
   })
-
-  // Subscribed once and left open: the microphone and recognizer are already
-  // running when the button is pressed, so no first words are lost while they
-  // start. The turn machine drops everything outside its listening window.
-  session.transcription.on(turns.onTranscript)
 
   const reportCamera = () => push({hasCamera: session.capabilities ? Boolean(session.capabilities.hasCamera) : null})
   session.on("ready", reportCamera)

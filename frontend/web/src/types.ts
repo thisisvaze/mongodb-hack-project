@@ -73,11 +73,22 @@ export interface SpaceState {
   audit: AuditEntry[];
 }
 
+export type SendMode = 'text' | 'audio' | 'both';
+export type InputUsed = 'text' | 'audio' | null;
+
+export interface TurnAudio {
+  format: string;
+  sample_rate: number | null;
+  channels: number;
+  data_b64: string;
+}
+
 export interface TurnRequest {
   space_id: string;
   user_id: string;
   ts: string;
-  text: string;
+  text: string | null;
+  audio: TurnAudio | null;
   image_b64: string | null;
   image_url: string | null;
 }
@@ -89,6 +100,8 @@ export interface TurnResponse {
   reply_text: string;
   audio_url: string | null;
   memory_ids: string[];
+  heard_text?: string | null;
+  input_used?: InputUsed;
 }
 
 export interface FrameRequest {
