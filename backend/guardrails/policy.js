@@ -62,6 +62,9 @@ const SECRET_PATTERN = new RegExp(
 // Words that follow "the password is ..." without being a password.
 const NOT_A_SECRET = new Set(['the', 'a', 'an', 'my', 'same', 'written', 'on', 'in', 'under', 'inside', 'taped', 'stuck', 'kept', 'stored', 'saved', 'at', 'by', 'next', 'behind', 'there', 'here', 'what', 'where', 'it', 'not', 'unknown', 'changed', 'new', 'old']);
 
+// A labelled ID number with letters in it, such as "passport number AB1234567",
+// which the digit-count rules below would miss.
+const ID_NUMBER = /\b(passport|driver'?s licen[cs]e|licen[cs]e|health card|sin|ssn|social insurance|social security|account|membership|member|policy|insurance)(\s+(?:number|no\.?|num|#))?(\s+(?:is|was)|\s*[:=#])?\s+([A-Z0-9][A-Z0-9-]{4,})\b/gi;
 const CARD_CANDIDATE = /\b(?:\d[ -]?){12,18}\d\b/g;
 const LONG_NUMBER = /\b(?:\d[ -]?){8,}\d\b/g; // 9+ digits: ID, health card, account or phone numbers
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
@@ -124,6 +127,11 @@ export function redactPersonalDetails(value, { vault = null } = {}) {
     }
     found.add(kind);
     return head + `(${kind} removed)`;
+  });
+  text = text.replace(ID_NUMBER, (whole, label, num, sep, value) => {
+    if (!/\d/.test(value)) return whole; // "passport is in the drawer" has no number
+    found.add('ID number');
+    return whole.slice(0, whole.length - value.length) + '(ID number removed)';
   });
   text = text.replace(CARD_CANDIDATE, (match) => {
     const digits = match.replace(/\D/g, '');

@@ -127,7 +127,7 @@ test('a number labelled as an ID or card is never treated as a phone number', ()
   for (const transcript of ['my health card number is 416 555 0199', 'SIN 416-555-0199', 'account number 4165550199']) {
     const { prompt } = turn({ transcript, reply: gemini('Noted.', 'documents', 'health card') });
     assert.deepEqual(prompt.vault, {}, transcript);
-    assert.ok(prompt.text.includes('(number removed)'), transcript);
+    assert.match(prompt.text, /\((?:ID )?number removed\)/, transcript);
   }
 });
 

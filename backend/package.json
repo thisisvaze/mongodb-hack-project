@@ -2,12 +2,20 @@
   "name": "safespace-backend",
   "private": true,
   "type": "module",
-  "description": "Backend guardrails for SafeSpace. Node built-ins only.",
+  "description": "Backend guardrails for SafeSpace, and the tamper-evident audit chain.",
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
-    "demo": "node scripts/demo.js"
+    "demo": "node scripts/demo.js",
+    "audit:seal": "node scripts/audit-chain.js seal",
+    "audit:verify": "node scripts/audit-chain.js verify",
+    "audit:watch": "node scripts/audit-chain.js watch",
+    "scorecard": "node scripts/redteam.js run",
+    "scorecard:history": "node scripts/redteam.js history"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "mongodb": "6.10.0"
   }
 }
