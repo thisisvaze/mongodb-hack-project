@@ -2,11 +2,13 @@
 
 The collections are created by [`db/setup.js`](../db/setup.js). Field names and values follow [`api-contract.md`](./api-contract.md): a stored document maps onto the contract's objects with only two changes, `_id` → `id` and BSON dates → ISO 8601 strings. Fields the contract does not have (`embedding`, `tactile_anchor`, ...) are backend-only and are left out of API responses.
 
+> **Examples in this doc use a hotel venue:** roles `guest` and `staff`; groups `venue_map` (layout and amenities), `blockers` (temporary obstacles), `staff_only` and `guest_private`. `db/setup.js`, the mock server and `api-contract.md` still seed the earlier home example (`resident` / `caregiver` / `visitor`). The collections, validators and indexes are identical: only the seed values differ.
+
 ## Why MongoDB Atlas Is Doing Real Work Here
 Instead of treating MongoDB as a passive CRUD table, **four native Atlas capabilities** drive the entire agent lifecycle:
 1. **Atlas Vector Search (`voyage-multimodal-3.5`, 1024-d) with Pre-Filtering:** Enforces the space's sharing rules (a user sees their own memories plus the groups their role can see) *inside* vector retrieval, so memories a caller may not see can never enter the LLM prompt.
-2. **State Reconciliation (`active` → `superseded`):** Resolves contradictions across **camera sightings** and **voice transcripts** (e.g., camera saw keys on desk at 10:00 → voice says *"keys in hoodie pocket"* at 10:05).
-3. **Native TTL Indexes (`expireAfterSeconds: 0`):** Permanently deletes expired and forgotten memories (a *freshly mopped floor* hazard after 2h, a whole temporary stay when it ends) a short time after they are marked, with no cron job.
+2. **State Reconciliation (`active` → `superseded`):** Resolves contradictions across **camera sightings** and **voice transcripts** (e.g., a camera saw a housekeeping cart in the 4th-floor corridor at 10:00 → staff say *"the cart has gone"* at 10:05; or a guest's room key was seen on the desk → the guest says *"room key in my jacket pocket"*).
+3. **Native TTL Indexes (`expireAfterSeconds: 0`):** Permanently deletes expired and forgotten memories (a *wet floor* blocker after 2h, a guest's whole room stay at checkout) a short time after they are marked, with no cron job.
 4. **Change Streams (`watch()`) + Strict `$jsonSchema` Validation:** Streams memory and audit changes to the `GET /api/events` SSE feed while enforcing the shape of every record at the database engine level.
 
 ---
@@ -20,47 +22,47 @@ Instead of treating MongoDB as a passive CRUD table, **four native Atlas capabil
 | `audit_events` | `AuditEntry` | Plus `query_text`. |
 | `observations` | — | Backend-only trace of `POST /api/turn` and `POST /api/frames` calls. |
 
-### 1. `spaces` — Members & Sharing Rules
-One document per space; `_id` is the contract's `space_id`. `members` is the contract's `User` list for that space, and `rules` is the contract's `Rules` object, stored as is, so `GET /api/state` and `PUT /api/rules` read and write it directly.
+### 1. `spaces` — Venues, Members & Sharing Rules
+One document per space (a venue, or a guest's room stay); `_id` is the contract's `space_id`. `members` is the contract's `User` list for that space, and `rules` is the contract's `Rules` object, stored as is, so `GET /api/state` and `PUT /api/rules` read and write it directly.
 
 ```json
 {
-  "_id": "home",
-  "name": "Home",
+  "_id": "hotel",
+  "name": "Demo Hotel",
   "mode": "shared_space",
-  "owner_id": "u_resident",
+  "owner_id": "u_staff",
   "members": [
-    { "id": "u_resident",  "name": "Resident",  "role": "resident" },
-    { "id": "u_caregiver", "name": "Caregiver", "role": "caregiver" },
-    { "id": "u_visitor",   "name": "Visitor",   "role": "visitor" }
+    { "id": "u_guest_a", "name": "Guest A",    "role": "guest" },
+    { "id": "u_guest_b", "name": "Guest B",    "role": "guest" },
+    { "id": "u_staff",   "name": "Front desk", "role": "staff" }
   ],
   "rules": {
     "roles": {
-      "resident":  { "can_see": ["*"] },
-      "caregiver": { "can_see": ["care", "supplies", "house_guide"] },
-      "visitor":   { "can_see": ["house_guide"] }
+      "guest": { "can_see": ["venue_map", "blockers"] },
+      "staff": { "can_see": ["venue_map", "blockers", "staff_only"] }
     },
     "topics": {
-      "medication":  { "group": "care", "keep_for": "30d" },
-      "supplies":    { "group": "supplies", "keep_for": null },
-      "valuables":   { "group": "resident_only", "keep_for": null },
-      "documents":   { "group": "resident_only", "keep_for": null },
-      "house_guide": { "group": "house_guide", "keep_for": null },
-      "hazard":      { "group": "house_guide", "keep_for": "2h" }
+      "layout":     { "group": "venue_map",     "keep_for": null },
+      "amenity":    { "group": "venue_map",     "keep_for": null },
+      "blocker":    { "group": "blockers",      "keep_for": "2h" },
+      "staff_note": { "group": "staff_only",    "keep_for": "7d" },
+      "belongings": { "group": "guest_private", "keep_for": null },
+      "documents":  { "group": "guest_private", "keep_for": null }
     },
-    "default_group": "resident_only"
+    "default_group": "guest_private"
   },
   "default_expires_at": null
 }
 ```
 - `mode`, `owner_id` and `default_expires_at` are backend-only.
 - `keep_for` must match `^[0-9]+[smhdw]$` or be `null`.
-- A **temporary stay** (`mode: "temporary_stay"`: a guest room, hotel or respite stay) has no shared topics, so every memory falls into the owner-only `default_group`, and `default_expires_at` is the end of the stay:
+- Guests share the venue map and blockers but never see each other's `guest_private` memories. Staff see the map, blockers and staff notes, but not guests' private memories either: no role lists `guest_private`, so only the owning guest sees them.
+- A **room stay** (`mode: "temporary_stay"`: the guest's own room) has no shared topics, so every memory falls into the owner-only `default_group`, and `default_expires_at` is checkout:
   ```json
   {
-    "_id": "stay_guest_room", "name": "Guest room", "mode": "temporary_stay", "owner_id": "u_resident",
-    "members": [{ "id": "u_resident", "name": "Resident", "role": "resident" }],
-    "rules": { "roles": { "resident": { "can_see": ["*"] } }, "topics": {}, "default_group": "resident_only" },
+    "_id": "room_412", "name": "Room 412", "mode": "temporary_stay", "owner_id": "u_guest_a",
+    "members": [{ "id": "u_guest_a", "name": "Guest A", "role": "guest" }],
+    "rules": { "roles": { "guest": { "can_see": ["*"] } }, "topics": {}, "default_group": "guest_private" },
     "default_expires_at": "2026-11-15T11:00:00Z"
   }
   ```
@@ -69,18 +71,18 @@ One document per space; `_id` is the contract's `space_id`. `members` is the con
 ---
 
 ### 2. `memories` — Unified Multimodal & Voice Spatial Store
-Stores every landmark, temporary hazard, personal object sighting, and spoken/overheard location note.
+Stores every venue landmark, blocker, guest belonging sighting, and spoken/overheard location note.
 
 ```json
 {
   "_id": "m_01",
-  "space_id": "home",
-  "owner_id": "u_resident",
-  "item": "house keys",
-  "summary": "Keys are in the left jacket pocket.",
+  "space_id": "hotel",
+  "owner_id": "u_guest_a",
+  "item": "room key",
+  "summary": "Room key is in the left jacket pocket.",
   "location": "left jacket pocket",
-  "topic": "valuables",
-  "group": "resident_only",
+  "topic": "belongings",
+  "group": "guest_private",
   "source": "voice",
   "status": "active",
   "superseded_by": null,
@@ -89,19 +91,19 @@ Stores every landmark, temporary hazard, personal object sighting, and spoken/ov
   "expires_at": null,
   "image_url": null,
 
-  "item_key": "house_keys",
+  "item_key": "room_key",
   "policy_decision": {
-    "topic": "valuables",
-    "group": "resident_only",
+    "topic": "belongings",
+    "group": "guest_private",
     "reason": "Personal belonging + spoken personal ownership",
     "pii_redacted": false,
     "checked_at": "2026-11-14T17:02:11Z"
   },
   "reinforcement_count": 1,
-  "tactile_anchor": "Left jacket pocket; the jacket hangs on the hook right of the front door.",
-  "previous_location": "Waist-high wooden table, 6 inches right of the laptop charger.",
+  "tactile_anchor": "Left jacket pocket, the one with the zip.",
+  "previous_location": "Room desk, 6 inches right of the lamp base.",
   "missing_since": null,
-  "transcript_snippet": "I'm putting my keys in my left jacket pocket",
+  "transcript_snippet": "I'm putting my room key in my left jacket pocket",
   "speaker": "self",
   "stt_confidence": 0.93,
   "source_observation_id": "obs_01J9Z8J2...",
@@ -119,16 +121,16 @@ Stores every landmark, temporary hazard, personal object sighting, and spoken/ov
 - `image_url` is the backend's own URL for `frame_thumb_b64`, never the glasses' signed URL.
 
 **Backend-only fields** (second block):
-- `item_key`: normalised slug the reconciler matches on (`"house_keys"`); `item` is the readable name.
+- `item_key`: normalised slug the reconciler matches on (`"room_key"`, `"elevator_bank"`, `"housekeeping_cart"`); `item` is the readable name.
 - `tactile_anchor`: touch/body-relative guidance for the guide loop; `location` is the short version shown in the contract.
 - `missing_since`: set by the guide loop when the user reaches the landmark and the item is not there. The memory stays `active`, because the contract has no `missing` status, until a newer sighting supersedes it.
-- Voice fields (`null` for camera-only memories): `transcript_snippet` (max 2000 characters), `speaker` (`self` = the user, `other` = an overheard helper such as family, a carer or a co-worker, `unknown`), `stt_confidence` (0–1), `source_observation_id`.
+- Voice fields (`null` for camera-only memories): `transcript_snippet` (max 2000 characters), `speaker` (`self` = the user, `other` = someone overheard, such as a staff member giving directions or a travelling companion, `unknown`), `stt_confidence` (0–1), `source_observation_id`.
 - `purge_at`: when MongoDB deletes the document (TTL). See below.
 
 #### Expiry, forgetting and deletion
 The contract keeps expired and forgotten memories visible with their status, so the TTL index is on `purge_at`, not `expires_at`:
 1. A backend sweep finds `status: "active"` memories with `expires_at` in the past, sets `status: "expired"`, `updated_at`, and `purge_at` (for example 1 hour later), and writes a `memory_expired` audit entry with `actor_id: "system"`.
-2. "Forget my keys" sets `status: "forgotten"` and a short `purge_at` (for example 10 minutes), and writes `memory_forgotten`. Only the owner can forget a memory (clarification 11).
+2. "Forget my passport" sets `status: "forgotten"` and a short `purge_at` (for example 10 minutes), and writes `memory_forgotten`. Only the owner can forget a memory (clarification 11).
 3. MongoDB deletes the document at `purge_at`. `null` means keep.
 
 #### Key Indexes on `memories`
@@ -166,13 +168,13 @@ Exactly the contract's `AuditEntry`, plus the backend-only `query_text`. Every f
 {
   "_id": "a_01",
   "ts": "2026-11-14T17:05:40Z",
-  "space_id": "home",
-  "actor_id": "u_visitor",
+  "space_id": "hotel",
+  "actor_id": "u_guest_b",
   "action": "query_denied",
   "verdict": "denied",
-  "detail": "Asked about house keys. Group resident_only is not visible to role visitor.",
+  "detail": "Asked about room key. Group guest_private is not visible to role guest.",
   "memory_ids": ["m_01"],
-  "query_text": "Where are the house keys?"
+  "query_text": "Where is the key for room 412?"
 }
 ```
 - `action`: `memory_stored | memory_superseded | memory_forgotten | memory_expired | query_answered | query_denied | rule_changed`
@@ -189,11 +191,11 @@ One row per `POST /api/turn` or `POST /api/frames` call the backend processed, k
 {
   "_id": "obs_01J9Z8J2...",
   "type": "turn",
-  "space_id": "home",
-  "user_id": "u_resident",
+  "space_id": "hotel",
+  "user_id": "u_guest_a",
   "ts": "2026-11-14T17:02:10Z",
   "text": null,
-  "heard_text": "I'm putting my keys in my left jacket pocket",
+  "heard_text": "I'm putting my room key in my left jacket pocket",
   "input_used": "audio",
   "kind": "saved",
   "memory_ids": ["m_01"],
@@ -250,7 +252,7 @@ pipeline = [
 ```
 
 ### Step B — Auditable Denial Detection (For the Judge Demo!)
-If Step A returns low-confidence/no match for an item request (e.g., the visitor asks *"Where are the house keys?"*), we check for an `active` memory matching that `item_key` in a group the caller's role cannot see — **never returning its location**. The backend writes a `query_denied` audit entry (`verdict: "denied"`, the matching ids in `memory_ids`) and replies with `kind: "denied"` and `memory_ids: []` (contract clarification 8). Judges see the red denied row pop up live in the Audit Log.
+If Step A returns low-confidence/no match for an item request (e.g., Guest B asks *"Where is the key for room 412?"*), we check for an `active` memory matching that `item_key` in a group the caller's role cannot see — **never returning its location**. The backend writes a `query_denied` audit entry (`verdict: "denied"`, the matching ids in `memory_ids`) and replies with `kind: "denied"` and `memory_ids: []` (contract clarification 8). Judges see the red denied row pop up live in the Audit Log.
 
 ---
 
@@ -264,11 +266,11 @@ stateDiagram-v2
   CheckExisting --> ADD: No active memory for (scope, item_key)
   CheckExisting --> CompareAnchor: Active memory exists
   CompareAnchor --> REINFORCE: Same landmark / cosine > 0.88
-  CompareAnchor --> SUPERSEDE: Different landmark OR explicit voice move ("put keys in pocket")
+  CompareAnchor --> SUPERSEDE: Different landmark OR explicit voice update ("the cart has gone", "key is in my pocket")
   REINFORCE --> ActiveDoc: Increment reinforcement_count + update updated_at
   SUPERSEDE --> OldDocSuperseded: Set old.status = "superseded", old.superseded_by = new_id
   SUPERSEDE --> NewActiveDoc: Insert new doc with status = "active", previous_location = old.tactile_anchor
 ```
 
 - Each `ADD` and `SUPERSEDE` writes a `memory_stored` or `memory_superseded` audit entry; the change stream turns these into `memory` and `audit` SSE events.
-- **Why storing `previous_location` is magic for the user:** ElevenLabs can answer *"Your keys are in your left hoodie pocket — you moved them from the desk 8 minutes ago."*
+- **Why storing `previous_location` is magic for the guest:** ElevenLabs can answer *"Your room key is in your left jacket pocket — you moved it from the desk 8 minutes ago."* The same history lets a guest ask *"What's changed in the lobby?"* and hear which blockers appeared or cleared.

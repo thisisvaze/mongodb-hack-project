@@ -2,7 +2,7 @@
 
 Work plan for everything in [`01-architecture-and-stream-pipeline.md`](./01-architecture-and-stream-pipeline.md), in the same order as that doc. Each step lists the work, who owns it, and how to tell it is done.
 
-The product is built to support blind and low-vision people wherever they go (see the [README](./README.md)), so the pipeline is the same for every space. `venue_id` in the data shapes below identifies the space the user is in (home, office, hotel room, ...).
+The product helps blind and low-vision guests find their way around venues they have never visited (see the [README](./README.md)). `venue_id` in the data shapes below identifies the venue the guest is in (a hotel, conference centre, restaurant, ...), or a guest's own room stay.
 
 Owners follow the 3-person split in the [README](./README.md):
 
@@ -38,7 +38,7 @@ Build the dev fallback first. It gives M and U real frames within the first hour
 - [ ] `dev-sim/index.html`:
   - webcam via `getUserMedia`, drawn to a canvas, posted as JPEG every ~500 ms
   - mic transcripts via the browser's `SpeechRecognition` API, posted when an utterance is final
-  - dropdowns for user (A / B) and space (`venue_id`: the demo space, or a temporary stay)
+  - dropdowns for user (Guest A / Guest B / Staff) and space (`venue_id`: the demo venue, or a guest's room stay)
 
 **Done when:** two laptops post frames at the same time as different users.
 
@@ -72,7 +72,7 @@ Build the dev fallback first. It gives M and U real frames within the first hour
 
 - [ ] `backend/src/gate.rs`: a background task spawned at startup, using `tokio::time::interval` to tick every 1.5 s per active session.
 - [ ] Visual trigger: pHash distance between `latest_frame` and `last_indexed_frame` is over a threshold, and the frame is not blurry. Start the threshold around 10 and tune it by walking around.
-- [ ] Speech trigger: a new final utterance that matches a keyword list (put, left, leaving, moved, keys, wallet, pills, kettle, door, stairs, drawer, cupboard, …). Keep this as a plain keyword check; an LLM call on every tick is too slow.
+- [ ] Speech trigger: a new final utterance that matches a keyword list (left, right, past, steps, door, stairs, elevator, lift, restroom, reception, exit, wet floor, cart, blocking, careful, room key, passport, put, moved, …). Keep this as a plain keyword check; an LLM call on every tick is too slow.
 - [ ] If neither trigger fires, make no API or database calls.
 - [ ] If one fires, set `last_indexed_frame = latest_frame` and start `tokio::spawn(process_observation(...))`.
 - [ ] Allow only one `process_observation` per user at a time (an `AtomicBool` flag on the session), so triggers cannot pile up.
@@ -84,7 +84,7 @@ Build the dev fallback first. It gives M and U real frames within the first hour
 | --- | --- |
 | Stare at a wall in silence | 0 |
 | Turn your head to a new view | 1 |
-| Say "putting my keys in my left coat pocket" | 1 |
+| Say "wet floor outside the restrooms" | 1 |
 
 ---
 
@@ -96,10 +96,10 @@ Build the dev fallback first. It gives M and U real frames within the first hour
 - [ ] Set a response schema in the request so the JSON always deserialises into `Vec<Observation>` with `serde`.
 - [ ] The prompt must enforce:
   - `tactile_anchor` uses touch and body-relative landmarks only, never colours or appearance
-  - `proposed_visibility` is `public` (shared with everyone in the space) only for permanent fixtures and hazards with no PII or faces
-  - `ttl_seconds` is `null`, `7200` for temporary hazards, or the end of the stay in temporary stay mode
+  - `proposed_visibility` is `public` (shared with everyone in the venue) only for venue fixtures and blockers with no PII or faces
+  - `ttl_seconds` is `null` for map entries, `7200` for blockers, or the checkout time in a room stay
   - `bbox` is `[ymin, xmin, ymax, xmax]` on a 0–1000 scale
-- [ ] Normalise `item_key` (for example `keys` → `house_keys`) so the reconciler can match items across sightings.
+- [ ] Normalise `item_key` (for example `lift` → `elevator_bank`, `key card` → `room_key`) so the reconciler can match items across sightings.
 - [ ] Server-side override: `personal_item` and `spoken_note` are always stored as `private`, whatever Gemini proposes.
 - [ ] Confirm the exact model ID for "Gemini 4 Carbon" on your API key and keep it in `GEMINI_MODEL`.
 
@@ -119,9 +119,9 @@ Follows the state machine in [doc 02](./02-mongodb-schema-and-governance.md).
   - different landmark, or the user said they moved it → **SUPERSEDE** (old doc gets `status: "superseded"` and `superseded_by`; new doc stores `previous_location`)
 - [ ] Set `expires_at` from `ttl_seconds`.
 - [ ] Store a small thumbnail (`frame_thumb_b64`) and the `bbox` for the UI.
-- [ ] Write one `audit_events` row per decision: promoted public, quarantined private, or superseded.
+- [ ] Write one `audit_events` row per decision: added to the venue map, shared as a blocker, quarantined private, or superseded.
 
-**Done when:** showing keys on a desk and then saying "keys are in my pocket" leaves one superseded memory, one active memory, and the matching audit rows, about 3 s after each trigger.
+**Done when:** showing a room key card on the desk and then saying "room key is in my pocket" leaves one superseded memory, one active memory, and the matching audit rows, about 3 s after each trigger.
 
 ---
 
@@ -131,9 +131,9 @@ Doc 01 ends with a latency table. Each row is a path that still has to be built 
 
 | Path | Work | Owner | Target to first word |
 | --- | --- | --- | --- |
-| Recall ("Where did I leave my keys?") | `embed_query` → `$vectorSearch` with the shared + own-private filter → short Gemini answer → ElevenLabs Flash v2.5 stream | M, S for voice | 0.8–1.0 s |
-| Live vision ("What bottle am I holding?") | `latest_frame` from RAM → Gemini vision → ElevenLabs | M, S for voice | 1.1–1.3 s |
-| Guide me (active homing) | 1-fps loop: `latest_frame` → clock-face check → short cue; pre-generate and cache common cues | S | one update per ~1 s |
+| Recall ("Where's the elevator?" / "Where did I put my room key?") | `embed_query` → `$vectorSearch` with the venue map + blockers + own-private filter → short Gemini answer → ElevenLabs Flash v2.5 stream | M, S for voice | 0.8–1.0 s |
+| Live vision ("What's in front of me?") | `latest_frame` from RAM → Gemini vision → ElevenLabs | M, S for voice | 1.1–1.3 s |
+| Guide me (route guidance) | 1-fps loop: `latest_frame` → clock-face + obstacle check → short cue, warning about blockers on the route; pre-generate and cache common cues | S | one update per ~1 s |
 
 - [ ] `POST /api/query { user_id, venue_id, text }` with a keyword-based intent split (where / what / guide me / forget).
 - [ ] `backend/src/ai/tts.rs`: ElevenLabs Flash v2.5 streaming endpoint through `reqwest`, forwarding the byte stream as it arrives to the glasses speakers and to the dev-sim page.

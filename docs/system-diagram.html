@@ -196,14 +196,14 @@
 
 <header>
   <div>
-    <h1>SafeSpace — Multi-Agent Smart Glasses Memory</h1>
-    <div class="sub">Many glasses stream video + mic into one governed MongoDB Atlas brain, and query it back in &lt;1s via ElevenLabs.</div>
+    <h1>SafeSpace — Smart Glasses Venue Memory for Blind Guests</h1>
+    <div class="sub">Staff and guests' glasses map a venue into one governed MongoDB Atlas brain; every blind guest is guided through it in &lt;1s via ElevenLabs.</div>
   </div>
   <div class="tabs" role="tablist" aria-label="Flow selector">
     <button class="tab active" data-mode="all">All Flows</button>
-    <button class="tab" data-mode="ingest">1. Stream In (Camera + Mic)</button>
-    <button class="tab" data-mode="shared">2. User B Queries Shared Space Map</button>
-    <button class="tab" data-mode="blocked">3. Blocked Private Query</button>
+    <button class="tab" data-mode="ingest">1. Map the Venue (Camera + Mic)</button>
+    <button class="tab" data-mode="shared">2. New Guest Is Guided</button>
+    <button class="tab" data-mode="blocked">3. Blocked Cross-Guest Query</button>
   </div>
 </header>
 
@@ -214,22 +214,22 @@
 
     <div class="card" id="c-agent-a">
       <div class="card-head">
-        <span>🕶️ Agent A — User A's Glasses</span>
+        <span>🕶️ Agent A — Staff Glasses</span>
         <span class="pill blue">Mentra Live</span>
       </div>
-      <p><strong>Streams video + mic</strong> as User A walks:<br/>
-      • Sees garage door &amp; kettle<br/>
-      • Says: <em>"Wallet by laptop; keys in hoodie pocket"</em></p>
+      <p><strong>Streams video + mic</strong> while walking the lobby:<br/>
+      • Sees reception desk &amp; elevators<br/>
+      • Says: <em>"Restrooms past reception on the right; wet floor in front"</em></p>
     </div>
 
     <div class="card" id="c-agent-b">
       <div class="card-head">
-        <span>🕶️ Agent B — User B's Glasses</span>
-        <span class="pill blue">2nd User / Phone</span>
+        <span>🕶️ Agent B — Guest's Glasses</span>
+        <span class="pill blue">Blind Guest / Phone</span>
       </div>
-      <p>Walks into the <strong>same space later</strong> with zero prior scan:<br/>
-      • Asks: <em>"Guide me to the kettle"</em><br/>
-      • Asks: <em>"Where is User A's wallet?"</em></p>
+      <p>Arrives at the <strong>venue for the first time</strong> with zero prior scan:<br/>
+      • Asks: <em>"Guide me to the restroom"</em><br/>
+      • Asks: <em>"Where's the key for room 412?"</em></p>
     </div>
 
     <div class="card" id="c-gate">
@@ -237,7 +237,7 @@
         <span>⚡ Ingest &amp; Policy Gate</span>
         <span class="pill blue">Gemini 4 + Voyage 3.5</span>
       </div>
-      <p>Skips unchanged frames, extracts <strong>touchable landmarks</strong>, embeds video+speech (<code>1024-d</code>), and splits Shared vs. Private.</p>
+      <p>Skips unchanged frames, extracts <strong>touchable landmarks</strong>, embeds video+speech (<code>1024-d</code>), and splits Venue Map / Blocker vs. Private.</p>
     </div>
   </section>
 
@@ -259,21 +259,21 @@
 
     <div class="card" id="c-public">
       <div class="card-head">
-        <span>🟢 Shared Space Layer</span>
+        <span>🟢 Shared Venue Map &amp; Blockers</span>
         <span class="pill green">visibility: public</span>
       </div>
-      <p>Doors, stairs, outlets, counters, temporary hazards.<br/>
-      <strong>Readable by everyone in the space</strong> (other blind users, helpers) + pushed live via <code>watch()</code>.</p>
+      <p>Entrances, reception, elevators, restrooms, exits + blockers (wet floor, carts) that expire in 2h.<br/>
+      <strong>Readable by every guest in the venue</strong> + pushed live via <code>watch()</code>.</p>
     </div>
 
     <div class="card" id="c-private">
       <div class="card-head">
-        <span>🔒 Private Personal Layer</span>
+        <span>🔒 Private Guest Layer</span>
         <span class="pill amber">owner_id locked</span>
       </div>
-      <p>Wallet, meds, passport, <em>"keys in left pocket"</em>.<br/>
+      <p>Room key, passport, meds, <em>"key in my left pocket"</em>. Hidden from other guests and staff.<br/>
       • Moved items flip old spot → <code>superseded</code><br/>
-      • Temporary stays auto-delete when the stay ends (<code>TTL</code>)</p>
+      • Room stays auto-delete at checkout (<code>TTL</code>)</p>
     </div>
 
     <div class="card" id="c-audit">
@@ -281,7 +281,7 @@
         <span>🛡️ Immutable Audit Log (Track 1)</span>
         <span class="pill red">audit_events</span>
       </div>
-      <p>Records every shared-layer promotion, voice <em>"Forget"</em> wipe, and logs <strong>🛑 DENIED</strong> if User B asks for User A's private items.</p>
+      <p>Records every shared-layer promotion, voice <em>"Forget"</em> wipe, and logs <strong>🛑 DENIED</strong> if one guest asks for another guest's private items.</p>
     </div>
   </section>
 
@@ -306,9 +306,9 @@
         <span>🔊 ElevenLabs Step-by-Step Guide</span>
         <span class="pill green">&lt;1.0s Flash TTS</span>
       </div>
-      <p>1. Coarse memory cue: <em>"Turn right toward desk"</em><br/>
-      2. 1-fps live camera homing: <em>"11 o'clock… 6 inches"</em><br/>
-      3. Auto-marks DB <code>missing</code> if item moved!</p>
+      <p>1. Route cue: <em>"Past reception on the right; wet floor, keep left"</em><br/>
+      2. 1-fps live camera guidance: <em>"2 o'clock… 5 steps"</em><br/>
+      3. New obstacle seen? Flags a blocker for every guest!</p>
     </div>
 
     <div class="card" id="c-judge">
@@ -316,14 +316,14 @@
         <span>🖥️ Judge Control Room UI</span>
         <span class="pill blue">Projector Screen</span>
       </div>
-      <p>Shows live glasses POV, <code>🟢 Shared</code> vs <code>🔒 Private</code> cards popping in, crossed-out <code>SUPERSEDED</code> moves, and flashing <code>🛑 DENIED</code> blocks.</p>
+      <p>Shows live glasses POV, <code>🟢 Map / Blocker</code> vs <code>🔒 Private</code> cards popping in, crossed-out <code>SUPERSEDED</code> moves, and flashing <code>🛑 DENIED</code> blocks.</p>
     </div>
   </section>
 </div>
 
 <div class="caption-bar" id="caption">
   <span class="tag">Overview</span>
-  <span id="caption-text">Click the 3 flow buttons top-right to trace how Writing, Shared Space Recall, and Private Blocking move through the system.</span>
+  <span id="caption-text">Click the 3 flow buttons top-right to trace how Mapping, Guiding a New Guest, and Cross-Guest Blocking move through the system.</span>
 </div>
 
 <script>
@@ -332,25 +332,25 @@
       active: ["c-agent-a","c-agent-b","c-gate","c-public","c-private","c-audit","c-voice","c-judge","a-write","a-query","a-tts","a-sse"],
       hi: {},
       tag: "Overview",
-      text: "Click the 3 flow buttons top-right to trace how Writing, Shared Space Recall, and Private Blocking move through the system."
+      text: "Click the 3 flow buttons top-right to trace how Mapping, Guiding a New Guest, and Cross-Guest Blocking move through the system."
     },
     ingest: {
       active: ["c-agent-a","c-gate","c-public","c-private","c-audit","c-judge","a-write","a-sse"],
       hi: { "c-agent-a": "hi-blue", "c-gate": "hi-blue", "c-public": "hi-green", "c-private": "hi-amber", "c-judge": "hi-blue" },
-      tag: "Flow 1 · Stream In",
-      text: "Agent A streams video + mic → Gemini 4 & Voyage 3.5 embed & split it: 'kettle' goes to 🟢 Shared Space, while 'wallet' & 'keys in pocket' lock to 🔒 Private (User A)."
+      tag: "Flow 1 · Map the Venue",
+      text: "Staff glasses stream video + mic → Gemini 4 & Voyage 3.5 embed & split it: 'restrooms' goes to the 🟢 venue map and 'wet floor' to 🟢 blockers (2h TTL), while a guest's 'room key in pocket' locks to 🔒 Private."
     },
     shared: {
       active: ["c-agent-b","c-public","c-voice","c-judge","a-query","a-tts"],
       hi: { "c-agent-b": "hi-blue", "c-public": "hi-green", "c-voice": "hi-green" },
-      tag: "Flow 2 · Shared Space Memory",
-      text: "Agent B (a second blind user) enters the kitchen cold and asks 'Guide me to the kettle' → $vectorSearch reads Agent A's 🟢 Shared memory in ~30ms → ElevenLabs guides Agent B step-by-step."
+      tag: "Flow 2 · New Guest Is Guided",
+      text: "A blind guest arrives cold and asks 'Guide me to the restroom' → $vectorSearch reads the 🟢 venue map and active blockers in ~30ms → ElevenLabs guides them step by step and warns about the wet floor."
     },
     blocked: {
       active: ["c-agent-b","c-private","c-audit","c-voice","c-judge","a-query","a-sse"],
       hi: { "c-agent-b": "hi-blue", "c-private": "hi-amber", "c-audit": "hi-red", "c-judge": "hi-red" },
       tag: "Flow 3 · Zero-Leak Block",
-      text: "Agent B asks 'Where is User A's wallet?' → $vectorSearch pre-filter excludes User A's 🔒 Private records → Audit Log flashes 🛑 DENIED live on the Judge Dashboard."
+      text: "Guest B asks 'Where's the key for room 412?' → $vectorSearch pre-filter excludes Guest A's 🔒 Private records → Audit Log flashes 🛑 DENIED live on the Judge Dashboard."
     }
   };
 
