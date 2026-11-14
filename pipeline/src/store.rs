@@ -49,6 +49,8 @@ pub struct ExistingMemory {
     pub tactile_anchor: Option<String>,
     #[serde(default)]
     pub expires_at: Option<DateTime>,
+    #[serde(default)]
+    pub topic: String,
 }
 
 /// A remembered thing and where it is, as shown to the extraction model.
@@ -137,7 +139,7 @@ impl Store {
         self.memories
             .clone_with_type::<ExistingMemory>()
             .find_one(filter)
-            .projection(doc! { "location": 1, "tactile_anchor": 1, "expires_at": 1 })
+            .projection(doc! { "location": 1, "tactile_anchor": 1, "expires_at": 1, "topic": 1 })
             .await
             .context("looking up the active memory")
     }

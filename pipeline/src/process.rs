@@ -252,19 +252,36 @@ pub async fn observe(app: &App, t: &Trigger) -> anyhow::Result<Vec<Stored>> {
 /// ADD / REINFORCE / SUPERSEDE, as in the state machine in docs/02. Returns the
 /// id of the memory that now holds this item.
 #[allow(clippy::too_many_arguments)]
-pub async fn reconcile(app: &App, t: &Trigger, space: &Space, mut item: Extracted, decision: Decision, vector: Vec<f32>, picture: Option<&str>, carries_text: bool, now: DateTime) -> anyhow::Result<String> {
+pub async fn reconcile(app: &App, t: &Trigger, space: &Space, mut item: Extracted, mut decision: Decision, vector: Vec<f32>, picture: Option<&str>, carries_text: bool, now: DateTime) -> anyhow::Result<String> {
     if vector.len() != embed::DIMENSIONS {
         anyhow::bail!("embedding has {} numbers, expected {}", vector.len(), embed::DIMENSIONS);
     }
 
     // The default group is the owner-only one: a sighting filed there looks
     // only at the owner's own memories and can never change one that others share.
-    let owner_only = decision.group == space.rules.default_group;
-    let mut existing = app.store.active_memory(&t.venue_id, &t.user_id, &item.item_key, &space.rules.default_group, owner_only).await?;
+    let default_group = &space.rules.default_group;
+    let owner_only = decision.group == *default_group;
+    // The owner's own private memory of the thing comes first. If the model
+    // files the same thing under a shared topic on a later sighting, it stays
+    // private: a misfiled laptop must not drift into the shared layer.
+    let mut existing = app.store.active_memory(&t.venue_id, &t.user_id, &item.item_key, default_group, true).await?;
+    match &existing {
+        Some(own) if !owner_only => {
+            decision.reason = format!("Kept with the owner's existing private memory of this item, in group '{default_group}'.");
+            decision.group = default_group.clone();
+            if !own.topic.is_empty() {
+                decision.topic = own.topic.clone();
+            }
+        }
+        Some(_) => {}
+        None if !owner_only => existing = app.store.active_memory(&t.venue_id, &t.user_id, &item.item_key, default_group, false).await?,
+        None => {}
+    }
+    let owner_only = decision.group == *default_group;
     // A temporary hazard must not replace, or put an expiry on, the permanent thing it sits on.
     if decision.topic == "hazard" && decision.expires_at.is_some() && existing.as_ref().is_some_and(|old| old.expires_at.is_none()) {
         item.item_key.push_str("_hazard");
-        existing = app.store.active_memory(&t.venue_id, &t.user_id, &item.item_key, &space.rules.default_group, owner_only).await?;
+        existing = app.store.active_memory(&t.venue_id, &t.user_id, &item.item_key, default_group, owner_only).await?;
     }
     let item_name = spaced(&item.item_key);
 

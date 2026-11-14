@@ -477,6 +477,23 @@ fn names_item(asked: &HashSet<String>, memory: &Document) -> bool {
     !is_view(memory) && stems(&spaced(memory.get_str("item_key").unwrap_or_default())).iter().any(|stem| asked.contains(stem))
 }
 
+/// Everything this service sorts, stores and says is English. If what was
+/// heard is mostly in another script (speech-to-text writing English words in
+/// Devanagari, say, or another language), it is rewritten in English first.
+async fn english_only(app: &App, text: String) -> String {
+    let letters = text.chars().filter(|c| c.is_alphabetic()).count();
+    let foreign = text.chars().filter(|c| c.is_alphabetic() && !c.is_ascii()).count();
+    let Some(gemini) = app.gemini.as_ref().filter(|_| letters > 0 && foreign * 5 >= letters) else { return text };
+    match gemini.to_english(&text).await {
+        Ok(english) if !english.is_empty() => english,
+        Ok(_) => text,
+        Err(e) => {
+            tracing::warn!("could not rewrite a turn in English: {e:#}");
+            text
+        }
+    }
+}
+
 /// One spoken or typed turn: a note to remember, a question, or "forget ...".
 pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): Json<TurnBody>) -> Result<Json<Value>, ApiError> {
     let space = load_space(&app, &body.space_id).await?;
@@ -485,6 +502,7 @@ pub async fn turn(State(app): State<Arc<App>>, headers: HeaderMap, Json(body): J
     if text.is_empty() && body.audio.as_ref().is_some_and(|a| !a.is_null()) {
         return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "audio-only turns are not supported: send the transcript in `text`".into()));
     }
+    let text = english_only(&app, text).await;
 
     // The turn's picture also becomes the user's latest frame. A bad picture must not lose the words.
     let frame = match load_image(&app, body.image_b64, body.image_url).await {
